@@ -1,0 +1,4 @@
+# Corporate Proxy bricht die Zertifikats-Revocation-Pruefung von schannel
+# ("CRYPT_E_NO_REVOCATION_CHECK") -> crates.io-Downloads schlagen sonst fehl.
+[http]
+check-revoke = false
