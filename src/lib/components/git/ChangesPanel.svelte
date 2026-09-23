@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Notice from "$lib/components/Notice.svelte";
   import { ContextMenu } from "bits-ui";
   import { invoke } from "@tauri-apps/api/core";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
@@ -263,13 +264,7 @@
 {/snippet}
 
 <div class="flex h-full min-h-0 flex-col text-xs">
-  {#if error}
-    <button
-      class="bg-destructive/15 text-destructive border-destructive/30 border-b px-2 py-1 text-left text-[11px] whitespace-pre-wrap"
-      title="Ausblenden"
-      onclick={() => (error = "")}>{error}</button
-    >
-  {/if}
+  <Notice bind:text={error} />
   <div class="flex min-h-0 flex-1">
     <!-- Schrumpft mit, damit auch im kleinen Fenster Platz fuer den Diff bleibt -->
     <div class="border-border flex w-2/5 max-w-80 min-w-48 shrink-0 flex-col border-r">

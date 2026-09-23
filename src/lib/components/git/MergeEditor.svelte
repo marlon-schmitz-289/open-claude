@@ -1,9 +1,11 @@
 <script lang="ts">
+  import Notice from "$lib/components/Notice.svelte";
   import { tick } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { git, type Conflict } from "$lib/git";
   import { parseConflicts, render, type Choice, type Segment } from "$lib/conflict";
   import { Button } from "$lib/components/ui/button/index.js";
+  import { DropdownMenu } from "bits-ui";
   import ChevronUpIcon from "@lucide/svelte/icons/chevron-up";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
   import UndoIcon from "@lucide/svelte/icons/undo-2";
@@ -29,6 +31,8 @@
   let busy = $state(false);
   let error = $state("");
   let scroller = $state<HTMLDivElement>();
+  // Echte Namen statt "Ours"/"Theirs", z. B. main / feature/x
+  let sides = $state({ ours: "Ours", theirs: "Theirs" });
 
   const CONTEXT = 4;
 
@@ -53,6 +57,7 @@
     error = "";
     editing = false;
     modified = false;
+    git.conflictSides(r).then((s) => (sides = s)).catch(() => {});
     git
       .conflict(r, p)
       .then((c) => {
@@ -147,17 +152,26 @@
 
   const lines = (t: string) => t.replace(/\n$/, "").split("\n");
   const label = (c: Choice) =>
-    ({ ours: "Ours", theirs: "Theirs", "ours-theirs": "Beide (Ours → Theirs)", "theirs-ours": "Beide (Theirs → Ours)", base: "Basis" })[c];
+    ({
+      ours: sides.ours,
+      theirs: sides.theirs,
+      "ours-theirs": `Beide (${sides.ours} zuerst)`,
+      "theirs-ours": `Beide (${sides.theirs} zuerst)`,
+      base: "Basis",
+    })[c];
 </script>
 
 <svelte:window {onkeydown} />
 
-<div class="flex h-full min-h-0 flex-col text-xs">
-  <!-- flex-wrap: im Standardfenster passen Pfad und alle Knoepfe nicht in eine Zeile -->
-  <div class="bg-chrome border-border flex flex-wrap items-center gap-2 border-b px-3 py-1.5">
-    <span class="min-w-0 grow basis-32 truncate font-mono text-[11px]" title={path}>{path}</span>
-    <span class="shrink-0 text-[11px] whitespace-nowrap tabular-nums {open.length ? 'text-destructive' : 'text-primary'}">
-      {#if total}{open.length} von {total} offen{:else}keine Konfliktmarker{/if}
+<div class="@container flex h-full min-h-0 flex-col text-xs">
+  <!-- Immer einzeilig: Pfad kuerzt sich, bei wenig Platz (Containerbreite, nicht Fenster) nur Icons -->
+  <div class="bg-chrome border-border flex items-center gap-1 border-b px-3 py-1.5">
+    <span class="mr-1 min-w-0 flex-1 truncate font-mono text-[11px]" title={path}>{path}</span>
+    <span
+      class="shrink-0 font-mono text-[11px] whitespace-nowrap tabular-nums {open.length ? 'text-destructive' : 'text-primary'}"
+      title={total ? `${total - open.length} von ${total} Konflikten gelöst` : undefined}
+    >
+      {#if total}{total - open.length}/{total}{:else}keine Konfliktmarker{/if}
     </span>
     <Button variant="ghost" size="sm" class="h-6 px-1.5" onclick={() => jump(-1)} disabled={!total || editing} title="Vorheriger Konflikt (Umschalt+F7)">
       <ChevronUpIcon class="size-3.5" />
@@ -166,27 +180,48 @@
       <ChevronDownIcon class="size-3.5" />
     </Button>
     <span class="bg-border h-4 w-px"></span>
-    <Button variant="ghost" size="sm" class="h-6 text-[11px]" disabled={conflict?.ours == null} onclick={() => whole(conflict!.ours)}>Ours komplett</Button>
-    <Button variant="ghost" size="sm" class="h-6 text-[11px]" disabled={conflict?.theirs == null} onclick={() => whole(conflict!.theirs)}>Theirs komplett</Button>
-    <Button variant="ghost" size="sm" class="h-6 text-[11px]" disabled={!conflict} onclick={() => whole(conflict!.merged)} title="Alle Entscheidungen verwerfen">
-      <UndoIcon class="size-3.5" /> Zurücksetzen
+    <!-- Ganze Datei von einer Seite: selten gebraucht, darum im Menue statt zwei breiter Knoepfe -->
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger
+        class="hover:bg-accent flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-[11px] font-medium whitespace-nowrap disabled:opacity-50"
+        disabled={!conflict}
+        >Ganze Datei <ChevronDownIcon class="size-3" /></DropdownMenu.Trigger
+      >
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="end"
+          sideOffset={4}
+          class="bg-popover text-popover-foreground ring-foreground/10 z-50 max-w-80 min-w-48 rounded-lg p-1 text-xs shadow-lg ring-1"
+        >
+          {#each [[sides.ours, conflict?.ours], [sides.theirs, conflict?.theirs]] as [name, text], k (k)}
+            <DropdownMenu.Item
+              class="data-highlighted:bg-accent flex cursor-pointer items-center gap-1 rounded px-2 py-1.5 data-disabled:opacity-50"
+              disabled={text == null}
+              onSelect={() => whole(text ?? null)}
+              >wie auf <span class="truncate font-mono">{name}</span></DropdownMenu.Item
+            >
+          {/each}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+    <Button variant="ghost" size="sm" class="h-6 shrink-0 text-[11px]" disabled={!conflict} onclick={() => whole(conflict!.merged)} title="Zurücksetzen: alle Entscheidungen verwerfen">
+      <UndoIcon class="size-3.5" /> <span class="hidden @xl:inline">Zurücksetzen</span>
     </Button>
-    <Button variant="ghost" size="sm" class="h-6 text-[11px] {editing ? 'text-primary' : ''}" disabled={!conflict} onclick={() => (editing ? applyEdit() : startEdit())}>
-      <PencilIcon class="size-3.5" /> {editing ? "Übernehmen" : "Bearbeiten"}
+    <Button variant="ghost" size="sm" class="h-6 shrink-0 text-[11px] {editing ? 'text-primary' : ''}" disabled={!conflict} onclick={() => (editing ? applyEdit() : startEdit())} title={editing ? "Übernehmen" : "Von Hand bearbeiten"}>
+      <PencilIcon class="size-3.5" /> <span class="hidden @xl:inline">{editing ? "Übernehmen" : "Bearbeiten"}</span>
     </Button>
   </div>
 
-  {#if error}
-    <div class="bg-destructive/15 text-destructive border-border border-b px-3 py-1.5 text-[11px]">{error}</div>
-  {/if}
+  <!-- bleibt stehen: erklaert z. B., warum eine Binaerdatei nur komplett uebernommen werden kann -->
+  <Notice bind:text={error} timeout={0} />
 
   {#if !conflict}
     {#if !error}
       <p class="text-muted-foreground px-3 py-6">Lade Konflikt …</p>
     {:else}
       <div class="flex min-h-0 flex-1 items-start gap-2 px-3 py-4">
-        <Button variant="outline" size="sm" class="text-xs" disabled={busy} onclick={() => side(false)}>Ours komplett übernehmen</Button>
-        <Button variant="outline" size="sm" class="text-xs" disabled={busy} onclick={() => side(true)}>Theirs komplett übernehmen</Button>
+        <Button variant="outline" size="sm" class="text-xs" disabled={busy} onclick={() => side(false)}>{sides.ours} komplett übernehmen</Button>
+        <Button variant="outline" size="sm" class="text-xs" disabled={busy} onclick={() => side(true)}>{sides.theirs} komplett übernehmen</Button>
       </div>
     {/if}
   {:else if editing}
@@ -241,11 +276,11 @@
             {:else}
               <div class="grid grid-cols-2">
                 <div class="border-border min-w-0 border-r">
-                  <div class="text-muted-foreground bg-emerald-500/10 px-3 font-sans text-[11px]">Ours ({seg.oursLabel || "HEAD"})</div>
+                  <div class="text-muted-foreground bg-emerald-500/10 px-3 font-sans text-[11px] truncate" title={sides.ours}>{sides.ours}</div>
                   <pre class="overflow-x-auto bg-emerald-500/5 px-3">{seg.ours.replace(/\n$/, "") || " "}</pre>
                 </div>
                 <div class="min-w-0">
-                  <div class="text-muted-foreground bg-sky-500/10 px-3 font-sans text-[11px]">Theirs ({seg.theirsLabel || "…"})</div>
+                  <div class="text-muted-foreground bg-sky-500/10 px-3 font-sans text-[11px] truncate" title={sides.theirs}>{sides.theirs}</div>
                   <pre class="overflow-x-auto bg-sky-500/5 px-3">{seg.theirs.replace(/\n$/, "") || " "}</pre>
                 </div>
               </div>
@@ -263,7 +298,7 @@
   {/if}
 
   <div class="bg-chrome border-border flex items-center justify-end gap-2 border-t px-3 py-1.5">
-    <span class="text-muted-foreground mr-auto text-[11px]">F7 / Umschalt+F7 navigieren · Strg+S speichern</span>
+    <span class="text-muted-foreground mr-auto min-w-0 truncate text-[11px] whitespace-nowrap">F7 / Umschalt+F7 navigieren · Strg+S speichern</span>
     <Button variant="ghost" size="sm" class="h-7 text-xs" onclick={cancel}>Abbrechen</Button>
     <Button size="sm" class="h-7 text-xs" disabled={!conflict || busy || (!editing && open.length > 0)} onclick={save}>
       Speichern &amp; als gelöst markieren

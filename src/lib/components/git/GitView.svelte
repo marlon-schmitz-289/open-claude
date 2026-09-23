@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Notice from "$lib/components/Notice.svelte";
   import { tick, untrack } from "svelte";
   import { DropdownMenu } from "bits-ui";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
@@ -220,15 +221,8 @@
     </div>
   {/if}
 
-  {#if error}
-    <button class="bg-destructive/15 text-destructive border-border border-b px-3 py-1.5 text-left whitespace-pre-wrap" onclick={() => (error = "")}
-      >{error}</button
-    >
-  {:else if note}
-    <button class="text-muted-foreground border-border truncate border-b px-3 py-1 text-left font-mono text-[11px]" onclick={() => (note = "")} title={note}
-      >{note}</button
-    >
-  {/if}
+  <Notice bind:text={error} />
+  {#if !error}<Notice bind:text={note} kind="note" />{/if}
 
   {#if status}
     <div class="flex min-h-0 flex-1">

@@ -142,6 +142,8 @@ export const git = {
   /** Ganze Seite uebernehmen und stagen, auch fuer Binaerdateien. */
   resolveSide: (repo: string, path: string, theirs: boolean) =>
     call<void>("git_resolve_side", { repo, path, theirs }),
+  /** Lesbare Namen der beiden Seiten im laufenden Vorgang, z. B. { ours: "main", theirs: "feature/x" }. */
+  conflictSides: (repo: string) => call<{ ours: string; theirs: string }>("git_conflict_sides", { repo }),
 };
 
 // ---------- GitHub / GitLab ----------

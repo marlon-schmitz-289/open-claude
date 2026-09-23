@@ -950,6 +950,50 @@ fn conflict(repo: &str, path: &str) -> Result<Conflict, String> {
     })
 }
 
+#[derive(Serialize)]
+pub struct Sides {
+    ours: String,
+    theirs: String,
+}
+
+/// Lesbare Namen fuer "ours"/"theirs" im laufenden Vorgang, z. B. main / feature/x.
+/// Auch fuer Binaerdateien, die keine Konfliktmarker mit Labels haben.
+fn sides(repo: &str) -> Sides {
+    let exists = |rev: &str| ok(git(repo).args(["rev-parse", "--verify", "--quiet", rev]));
+    let name = |rev: &str| {
+        let n = out(git(repo).args(["name-rev", "--name-only", "--no-undefined", rev]))
+            .ok()
+            .map(|s| s.trim().trim_start_matches("remotes/").to_string())
+            .filter(|s| !s.is_empty());
+        n.or_else(|| out(git(repo).args(["rev-parse", "--short", rev])).ok().map(|s| s.trim().to_string()))
+            .unwrap_or_else(|| rev.to_string())
+    };
+    let head = out(git(repo).args(["rev-parse", "--abbrev-ref", "HEAD"])).map(|s| s.trim().to_string());
+    // Beim Rebase ist HEAD losgeloest, "ours" ist der Branch, auf den rebased wird.
+    let onto = || {
+        let dir = PathBuf::from(out(git(repo).args(["rev-parse", "--absolute-git-dir"])).ok()?.trim());
+        let sha = ["rebase-merge/onto", "rebase-apply/onto"]
+            .iter()
+            .find_map(|f| std::fs::read_to_string(dir.join(f)).ok())?;
+        Some(name(sha.trim()))
+    };
+    let ours = match head {
+        Ok(h) if h != "HEAD" => h,
+        _ => onto().unwrap_or_else(|| "HEAD".into()),
+    };
+    let theirs = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD"]
+        .into_iter()
+        .find(|r| exists(r))
+        .map(name)
+        .unwrap_or_else(|| "Theirs".into());
+    Sides { ours, theirs }
+}
+
+#[tauri::command]
+pub async fn git_conflict_sides(repo: String) -> Result<Sides, String> {
+    blocking(move || Ok(sides(&repo))).await
+}
+
 /// Ganze Seite uebernehmen, auch fuer Binaerdateien, die der Merge-Editor nicht laden kann.
 fn resolve_side(repo: &str, path: &str, theirs: bool) -> Result<(), String> {
     inside(repo, path)?;

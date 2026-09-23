@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Notice from "$lib/components/Notice.svelte";
   import { untrack } from "svelte";
   import { ContextMenu, DropdownMenu } from "bits-ui";
   import SettingsIcon from "@lucide/svelte/icons/settings-2";
@@ -225,11 +226,7 @@
 {/snippet}
 
 <div class="flex h-full flex-col overflow-y-auto text-xs">
-  {#if error}
-    <p class="bg-destructive/15 text-destructive border-destructive/30 border-b px-2 py-1 text-[11px]">
-      {error}
-    </p>
-  {/if}
+  <Notice bind:text={error} />
 
   <!-- Noch nicht in die Basis gemergt: Ueberblick ueber alle offenen Branches -->
   {#if base}

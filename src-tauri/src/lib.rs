@@ -333,7 +333,8 @@ pub fn run() {
             git::git_set_base,
             git::git_conflict,
             git::git_resolve,
-            git::git_resolve_side
+            git::git_resolve_side,
+            git::git_conflict_sides
         ])
         .setup(|app| tray(app.handle()).map_err(Into::into))
         // Mit Tray versteckt Schliessen nur — raus kommt man dann ueber das Tray-Menue.

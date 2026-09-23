@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Notice from "$lib/components/Notice.svelte";
   import { age } from "$lib/utils";
   import { tick, untrack } from "svelte";
   import { ContextMenu } from "bits-ui";
@@ -349,9 +350,7 @@
     <Input bind:value={query} placeholder="Verlauf durchsuchen" class="h-6! text-[11px]" />
   </div>
 
-  {#if error}
-    <p class="bg-destructive/15 text-destructive border-destructive/30 border-b px-2 py-1 text-[11px]">{error}</p>
-  {/if}
+  <Notice bind:text={error} />
 
   <!-- min-h-20: die Liste bleibt sichtbar, auch wenn die gespeicherte Detailhoehe nicht mehr ins Fenster passt -->
   <div class="flex min-h-20 flex-1 flex-col overflow-hidden">
