@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+# CI liest nur
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:

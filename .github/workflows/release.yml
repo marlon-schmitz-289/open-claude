@@ -54,7 +54,7 @@ jobs:
 
       # beforeDevCommand baut ocui-sh nur fuer den Dev-Modus, im Release-Build reicht beforeBuildCommand
       - uses: tauri-apps/tauri-action@v0
-        if: startsWith(github.ref, 'refs/tags/')
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -65,14 +65,12 @@ jobs:
           args: ${{ matrix.args }}
 
       - uses: tauri-apps/tauri-action@v0
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
         with:
           args: ${{ matrix.args }}
 
       - uses: actions/upload-artifact@v4
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
         with:
           name: bundles-${{ matrix.name }}
           # nur die Installer, nicht das entpackte AppDir
