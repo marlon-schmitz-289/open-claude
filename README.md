@@ -30,7 +30,7 @@ Tippen filtert unscharf: `adbe` findet `adesk-backend`. Auch Sprachen sind suchb
 | `Strg` + `R` | Neu einlesen |
 | `Strg` + `O` | Dev-Ordner wechseln |
 | `F1` | Kürzel-Übersicht |
-| `Esc` | Suche leeren, sonst schließen |
+| `Esc` | Suche leeren, sonst in den Tray |
 
 Angepinnte Projekte stehen immer oben. Die Sprache wird an den üblichen Projektdateien erkannt
 (`Cargo.toml`, `*.csproj`, `tsconfig.json`, …) und als Badge angezeigt, daneben Branch und Alter
@@ -38,6 +38,9 @@ des letzten Commits.
 
 Ohne gesetzten Pfad sucht die App in `%DEV%`, sonst in `%USERPROFILE%\Dev`. Einstellungen,
 Pins und der Repo-Cache liegen in `%APPDATA%\com.marlonschmitz.openclaude\settings.json`.
+
+Schließen legt die App nur ins Tray ab, das Fenster kommt per Klick aufs Tray-Icon zurück.
+Wirklich beendet wird sie über *Beenden* im Kontextmenü des Tray-Icons.
 
 Der Autostart-Schalter in der Fußzeile trägt die App in den Autostart des angemeldeten
 Benutzers ein.

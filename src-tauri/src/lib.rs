@@ -2,6 +2,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::Serialize;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Manager, WindowEvent};
 use walkdir::WalkDir;
 
 #[derive(Serialize)]
@@ -233,6 +236,49 @@ fn reveal(path: String) -> Result<(), String> {
         .map_err(|e| format!("Explorer konnte nicht geoeffnet werden: {e}"))
 }
 
+/// Holt das Fenster aus dem Tray zurueck. Versteckt reicht nicht als Annahme:
+/// es kann genauso gut nur minimiert sein.
+fn reopen(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// Tray-Icon mit Menue. Einziger Weg, die App wirklich zu beenden.
+fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let oeffnen = MenuItem::with_id(app, "oeffnen", "Öffnen", true, None::<&str>)?;
+    let beenden = MenuItem::with_id(app, "beenden", "Beenden", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&oeffnen, &beenden])?;
+
+    let mut builder = TrayIconBuilder::with_id("main")
+        .tooltip("Open Claude")
+        .menu(&menu)
+        // Linksklick oeffnet, das Menue haengt auf rechts.
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "oeffnen" => reopen(app),
+            "beenden" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                reopen(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder.build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -243,6 +289,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .invoke_handler(tauri::generate_handler![default_root, scan, launch, reveal])
+        .setup(|app| tray(app.handle()).map_err(Into::into))
+        // Schliessen versteckt nur — raus kommt man ueber das Tray-Menue.
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
