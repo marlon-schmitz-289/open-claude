@@ -291,9 +291,32 @@
       aria-label="Zurück zur Liste (Strg+Umschalt+W)"
       title="Zurück zur Liste (Strg+Umschalt+W)"><ArrowLeftIcon class="size-3.5" /></button
     >
-    <span class="flex-1 truncate text-xs font-semibold" data-tauri-drag-region>
-      {split(activeSession.repo.rel)[1]}
-    </span>
+    <div class="flex min-w-0 flex-1 items-center gap-2" data-tauri-drag-region>
+      <span class="truncate text-xs font-semibold" data-tauri-drag-region>
+        {split(activeSession.repo.rel)[1]}
+      </span>
+      {#if split(activeSession.repo.rel)[0]}
+        <span
+          class="text-muted-foreground hidden truncate font-mono text-[11px] sm:block"
+          data-tauri-drag-region
+        >
+          {split(activeSession.repo.rel)[0]}
+        </span>
+      {/if}
+      <Badge variant="outline" class="text-muted-foreground shrink-0 gap-1 font-mono text-[11px]">
+        <GitBranchIcon class="size-3" />
+        {activeSession.repo.branch}
+      </Badge>
+      {#each activeSession.repo.langs ?? [] as lang (lang)}
+        <Badge variant="outline" class="text-muted-foreground shrink-0 gap-1.5 text-[11px]">
+          <span
+            class="size-2 rounded-full"
+            style="background:{LANG_COLOR[lang] ?? 'var(--muted-foreground)'}"
+          ></span>
+          {lang}
+        </Badge>
+      {/each}
+    </div>
     <Button
       variant="ghost"
       size="sm"
@@ -487,7 +510,7 @@
       aria-pressed={autostart}
       title={autostart ? "Startet mit Windows" : "Beim Anmelden automatisch starten"}
     >
-      <PowerIcon class="size-3.5" /> Autostart {autostart ? "an" : "aus"}
+      <PowerIcon class="size-3.5" /> Autostart <span class="inline-block w-6 text-left">{autostart ? "an" : "aus"}</span>
     </Button>
     <Button
       variant="ghost"
@@ -497,7 +520,7 @@
       aria-pressed={tray}
       title={tray ? "Schließen versteckt ins Tray" : "Schließen beendet die App"}
     >
-      <InboxIcon class="size-3.5" /> Tray {tray ? "an" : "aus"}
+      <InboxIcon class="size-3.5" /> Tray <span class="inline-block w-6 text-left">{tray ? "an" : "aus"}</span>
     </Button>
     <Separator orientation="vertical" class="h-3.5!" />
     <span class="flex items-center gap-1.5">

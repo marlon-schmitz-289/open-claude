@@ -59,12 +59,18 @@ fn parent(dir: &str) -> Option<&str> {
         .map(|(p, _)| p)
 }
 
-/// Welche Shell `claude` startet. Windows: Git-Bash, sonst pwsh, sonst cmd. Unix: $SHELL.
+/// Welche Shell `claude` startet. Zuerst die eigene ocui-sh (`own`, liegt neben der App),
+/// sonst Windows: Git-Bash, pwsh, cmd. Unix: $SHELL.
 fn shell(
     windows: bool,
+    own: &str,
     env: impl Fn(&str) -> Option<String>,
     exists: impl Fn(&str) -> bool,
 ) -> (String, Vec<String>) {
+    // ocui-sh startet claude selbst, danach ihre REPL.
+    if exists(own) {
+        return (own.into(), vec![]);
+    }
     if !windows {
         let sh = env("SHELL")
             .filter(|s| !s.trim().is_empty())
@@ -129,12 +135,39 @@ pub fn pty_open(
         .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| format!("PTY konnte nicht geoeffnet werden: {e}"))?;
 
-    let (program, args) = shell(cfg!(windows), |k| std::env::var(k).ok(), |p| Path::new(p).is_file());
+    // ocui-sh liegt neben der Exe: dev target/debug, installiert packt tauri build alle Bins
+    // des Pakets mit ein. Fehlt es, greift die Fallback-Shell.
+    let own = std::env::current_exe()
+        .map(|e| e.with_file_name(format!("ocui-sh{}", std::env::consts::EXE_SUFFIX)))
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (program, args) =
+        shell(cfg!(windows), &own, |k| std::env::var(k).ok(), |p| Path::new(p).is_file());
     let mut cmd = CommandBuilder::new(program);
     cmd.args(args);
     cmd.cwd(&cwd);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+
+    // Aus einer Claude-Session gestartet (z. B. tauri dev) erben wir deren Marker;
+    // das claude im Terminal haelt sich dann fuer einen Sub-Agent: keine Farben, kein Transcript.
+    // NO_COLOR setzt Claude Code fuer seine Tool-Shells; ein Terminal soll trotzdem Farben zeigen.
+    for key in [
+        "NO_COLOR",
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "CLAUDECODE",
+        "AI_AGENT",
+        "CLAUDE_PID",
+        "CLAUDE_EFFORT",
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_SESSION_ATTENDED",
+        "CLAUDE_CODE_MESSAGING_SOCKET",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_EXECPATH",
+    ] {
+        cmd.env_remove(key);
+    }
 
     let mut child = pair
         .slave
@@ -220,6 +253,7 @@ mod tests {
     fn run(windows: bool, env: &[(&str, &str)], files: &[&str]) -> (String, Vec<String>) {
         shell(
             windows,
+            OWN,
             |k| env.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string()),
             |p| files.contains(&p),
         )
@@ -230,6 +264,15 @@ mod tests {
         ("LOCALAPPDATA", "C:\\Users\\m\\AppData\\Local"),
         ("PATH", "C:\\Windows;D:\\Tools\\Git\\cmd;C:\\ps"),
     ];
+
+    const OWN: &str = "C:\\app\\ocui-sh.exe";
+
+    #[test]
+    fn eigene_shell_hat_vorrang() {
+        let bash = "C:\\Program Files\\Git\\bin\\bash.exe";
+        assert_eq!(run(true, WIN_ENV, &[OWN, bash]), (OWN.to_string(), vec![]));
+        assert_eq!(run(false, &[], &[OWN]).0, OWN);
+    }
 
     #[test]
     fn windows_bevorzugt_git_bash_in_reihenfolge() {

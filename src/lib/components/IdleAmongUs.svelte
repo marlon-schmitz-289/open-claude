@@ -168,11 +168,12 @@
     preload("/easteregg/walking.mp3").then((b) => (walkBuffer = b), () => {});
 
     const events = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];
-    for (const e of events) window.addEventListener(e, onActivity, { passive: true });
+    // Capture: xterm stoppt die Propagation seiner Tasten-Events, sonst zaehlt Tippen im Terminal nicht.
+    for (const e of events) window.addEventListener(e, onActivity, { passive: true, capture: true });
     idleTimer = setTimeout(spawn, FIRST_SPAWN);
 
     return () => {
-      for (const e of events) window.removeEventListener(e, onActivity);
+      for (const e of events) window.removeEventListener(e, onActivity, { capture: true });
       if (idleTimer) clearTimeout(idleTimer);
       if (animFrame !== null) cancelAnimationFrame(animFrame);
       crew.forEach(stopWalkSound);

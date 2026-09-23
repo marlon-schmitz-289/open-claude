@@ -65,12 +65,37 @@
     const t = new Terminal({
       allowTransparency: true,
       cursorBlink: true,
+      cursorStyle: "bar",
       fontFamily: css.getPropertyValue("--font-mono") || "monospace",
       fontSize: 13,
+      lineHeight: 1.2,
+      letterSpacing: 0.3,
+      fontWeightBold: "600",
+      scrollback: 10000,
+      smoothScrollDuration: 90,
+      // Palette Richtung Tokyo Night, magenta nah am Primary.
       theme: {
         background: "#00000000",
         foreground: css.getPropertyValue("--foreground"),
         cursor: css.getPropertyValue("--primary"),
+        cursorAccent: "#1a1b26",
+        selectionBackground: "#a78bfa40",
+        black: "#2a2b3d",
+        red: "#f7768e",
+        green: "#9ece6a",
+        yellow: "#e0af68",
+        blue: "#7aa2f7",
+        magenta: "#a78bfa",
+        cyan: "#7dcfff",
+        white: "#c0caf5",
+        brightBlack: "#565f89",
+        brightRed: "#ff8fa3",
+        brightGreen: "#b9f27c",
+        brightYellow: "#ffc777",
+        brightBlue: "#8db0ff",
+        brightMagenta: "#c4b5fd",
+        brightCyan: "#a4e2ff",
+        brightWhite: "#e5e9f7",
       },
     });
     term = t;
@@ -113,7 +138,18 @@
 
 <!-- ponytail: kein Scrollback ueber Neustart, Output lebt nur im xterm-Buffer. -->
 <div class="h-full p-2 {visible ? '' : 'hidden'}">
-  <div class="bg-card border-border h-full overflow-hidden rounded-lg border p-2">
+  <!-- Dezenter Primary-Schimmer, scheint durchs transparente Terminal. -->
+  <div
+    class="h-full overflow-hidden rounded-xl px-3 py-2.5 shadow-lg ring-1 shadow-black/30 ring-white/5 transition-shadow duration-300 focus-within:ring-primary/40 focus-within:shadow-primary/10"
+    style="background: radial-gradient(ellipse at top right, color-mix(in oklch, var(--primary) 8%, transparent), transparent 60%), var(--card);"
+  >
     <div bind:this={el} class="h-full"></div>
   </div>
 </div>
+
+<style>
+  /* xterm.css gibt dem Viewport schwarz, das verdeckt den Verlauf. */
+  :global(.xterm .xterm-viewport) {
+    background-color: transparent !important;
+  }
+</style>
