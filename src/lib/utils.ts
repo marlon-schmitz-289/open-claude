@@ -24,6 +24,6 @@ const AGE_STEPS: [number, string][] = [
 export function age(iso: string) {
   if (!iso) return "";
   const diff = Date.now() - Date.parse(iso);
-  for (const [ms, unit] of AGE_STEPS) if (diff >= ms) return `${Math.round(diff / ms)} ${unit}`;
+  for (const [ms, unit] of AGE_STEPS) if (diff >= ms) return `${Math.floor(diff / ms)} ${unit}`;
   return "jetzt";
 }

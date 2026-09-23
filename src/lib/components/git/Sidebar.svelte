@@ -190,9 +190,9 @@
     run(() => git.checkout(repo, b.name, false, null));
   }
   function checkoutRemote(b: Branch) {
-    // lokaler Trackingname = Remote-Name ohne "<remote>/".
-    const local = b.name.slice(b.name.indexOf("/") + 1);
-    run(() => git.checkout(repo, local, true, b.name));
+    // Das Backend wechselt auf einen vorhandenen lokalen Branch oder legt den Tracking-Branch an
+    // (Name ueber die echten Remotes, auch bei "up/stream/x").
+    run(() => git.checkout(repo, b.name, false, null));
   }
 
   async function showStash(s: Stash) {
@@ -238,6 +238,7 @@
         <button
           class="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold"
           onclick={() => (collapsed.open = !collapsed.open)}
+          aria-expanded={!collapsed.open}
           title="Branches mit Commits, die noch nicht in {base} sind{merges < open.length
             ? ` · ${merges} Merges reichen, eingerückte kommen mit`
             : ''}"
@@ -324,6 +325,7 @@
     <button
       class="hover:bg-accent flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold"
       onclick={() => (collapsed.branches = !collapsed.branches)}
+      aria-expanded={!collapsed.branches}
     >
       <ChevronRightIcon class="size-3 shrink-0 transition-transform {collapsed.branches ? '' : 'rotate-90'}" />
       <GitBranchIcon class="size-3.5" />
@@ -384,7 +386,16 @@
                     "Löschen",
                     () =>
                       askConfirm("Branch löschen", `„${b.name}“ lokal löschen?`, async () => {
-                        await git.branchDelete(repo, b.name, false, false);
+                        try {
+                          await git.branchDelete(repo, b.name, false, false);
+                        } catch (e) {
+                          if (!String(e).includes("not fully merged")) throw e;
+                          askConfirm(
+                            "Branch nicht gemergt",
+                            `„${b.name}“ enthält Commits, die in keinem anderen Branch liegen. Trotzdem löschen?`,
+                            async () => void (await git.branchDelete(repo, b.name, true, false)),
+                          );
+                        }
                       }),
                     true,
                   )}
@@ -402,6 +413,7 @@
     <button
       class="hover:bg-accent flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold"
       onclick={() => (collapsed.remotes = !collapsed.remotes)}
+      aria-expanded={!collapsed.remotes}
     >
       <ChevronRightIcon class="size-3 shrink-0 transition-transform {collapsed.remotes ? '' : 'rotate-90'}" />
       <CloudIcon class="size-3.5" />
@@ -459,6 +471,7 @@
     <button
       class="hover:bg-accent flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold"
       onclick={() => (collapsed.tags = !collapsed.tags)}
+      aria-expanded={!collapsed.tags}
     >
       <ChevronRightIcon class="size-3 shrink-0 transition-transform {collapsed.tags ? '' : 'rotate-90'}" />
       <TagIcon class="size-3.5" />
@@ -502,6 +515,7 @@
     <button
       class="hover:bg-accent flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold"
       onclick={() => (collapsed.stashes = !collapsed.stashes)}
+      aria-expanded={!collapsed.stashes}
     >
       <ChevronRightIcon class="size-3 shrink-0 transition-transform {collapsed.stashes ? '' : 'rotate-90'}" />
       <ArchiveIcon class="size-3.5" />
@@ -550,6 +564,7 @@
       <button
         class="hover:bg-accent flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold"
         onclick={() => (collapsed.pulls = !collapsed.pulls)}
+        aria-expanded={!collapsed.pulls}
       >
         <ChevronRightIcon class="size-3 shrink-0 transition-transform {collapsed.pulls ? '' : 'rotate-90'}" />
         <GitPullRequestIcon class="size-3.5" />

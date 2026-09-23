@@ -1,7 +1,7 @@
 # Open Claude
 
 Desktop-Launcher für Claude Code. Findet alle Git-Repos unter einem Dev-Ordner und startet
-`claude` im gewählten Projekt in einem eingebauten Terminal (unter Windows mit Git-Bash).
+`claude` im gewählten Projekt in einem eingebauten Terminal (mit der eigenen Shell `ocui-sh`).
 Dazu kommt ein eingebauter Git-Client: Änderungen stagen und committen, Verlauf mit Graph,
 Branches, Stashes, Tags, Merge-Editor und Klonen von GitHub und GitLab.
 
@@ -15,13 +15,14 @@ Windows fragt daher einmalig nach: *Weitere Informationen → Trotzdem ausführe
 Voraussetzungen auf dem Rechner:
 
 - `claude` auf dem PATH — sonst öffnet sich das Terminal ohne startende CLI
-- Git for Windows — liefert die Bash fürs Terminal und die Zeit des letzten Commits;
-  ohne Git fällt das Terminal auf `pwsh` bzw. `cmd` zurück
+- Git for Windows — für die Git-Ansicht, die Zeit des letzten Commits und für Befehle mit Pipes,
+  Umleitungen oder Variablen im Terminal (`ocui-sh` reicht sie an die Git-Bash weiter, sonst an `cmd`)
 - Windows 10 1809 oder neuer (ConPTY)
 
 ## Bedienung
 
-Tippen filtert unscharf: `adbe` findet `adesk-backend`. Auch Sprachen sind suchbar (`rust`).
+Tippen filtert unscharf: `adbe` findet `adesk-backend`, `uber` findet `Überblick`. Auch Sprachen sind
+suchbar (`rust`).
 
 | Taste | Aktion |
 | --- | --- |
@@ -37,7 +38,7 @@ Tippen filtert unscharf: `adbe` findet `adesk-backend`. Auch Sprachen sind suchb
 | `Strg` + `R` | Neu einlesen |
 | `Strg` + `O` | Dev-Ordner wechseln |
 | `F1` | Kürzel-Übersicht |
-| `Esc` | Suche leeren, sonst in den Tray |
+| `Esc` | Suche leeren, sonst schließen (je nach Einstellung ins Tray) |
 
 Im Terminal gehen alle Tasten an die Shell, außer:
 
@@ -58,21 +59,26 @@ später wechselt `Strg` + `O` ihn. Einstellungen,
 Pins und der Repo-Cache liegen in `%APPDATA%\com.marlonschmitz.openclaude\settings.json`.
 
 Pro Projekt läuft höchstens eine Sitzung. Erneutes Starten springt zur offenen Sitzung,
-laufende Sitzungen sind in der Liste markiert. Die Shell sucht die App in dieser Reihenfolge:
-Git-Bash, `pwsh`, `cmd`.
+laufende Sitzungen sind in der Liste markiert. Beenden (Titelleiste oder das X am Badge *läuft*)
+fragt vorher nach. Das Terminal startet `ocui-sh`, die neben der App liegt: erst `claude`, danach
+eine einfache Shell. Fehlt sie, nimmt die App Git-Bash, `pwsh` oder `cmd`.
 
-Schließen legt die App nur ins Tray ab, das Fenster kommt per Klick aufs Tray-Icon zurück.
-Wirklich beendet wird sie über *Beenden* im Kontextmenü des Tray-Icons.
+Das Zahnrad rechts in der Suchleiste hat zwei Schalter:
 
-Der Autostart-Schalter in der Fußzeile trägt die App in den Autostart des angemeldeten
-Benutzers ein.
+- *Schließen legt ins Tray* (Standard: an): Schließen versteckt das Fenster nur, es kommt per
+  Klick aufs Tray-Icon zurück; beendet wird die App über *Beenden* im Kontextmenü des Tray-Icons.
+  Ist der Schalter aus, beendet Schließen die App samt allen laufenden Sitzungen.
+- *Mit Windows starten* trägt die App in den Autostart des angemeldeten Benutzers ein.
+
+Daneben liegen *Neu einlesen*, *Klonen* und *Konten* als Icons.
 
 ## Git-Ansicht
 
 `Strg` + `G` in der Liste oder *Git* im Terminal-Kopf öffnet die Git-Ansicht des Projekts.
 Links stehen Branches (mit ↑↓ zum Upstream), Remotes, Tags, Stashes und offene Pull Requests,
 rechts die Tabs *Änderungen* und *Verlauf*. Aktionen gibt es per Rechtsklick, Löschen,
-`reset --hard`, Verwerfen und Force-Push fragen vorher nach.
+Reset, Verwerfen und Force-Push fragen vorher nach. Nicht gemergte Branches lassen sich nach
+einer zweiten Rückfrage trotzdem löschen.
 
 - **Nicht gemergt:** Oben in der Sidebar stehen alle Branches mit Commits, die noch nicht im
   Production-Branch sind, mit Anzahl und Alter. Gemergte Branches sind ausgegraut. Der
@@ -82,7 +88,8 @@ rechts die Tabs *Änderungen* und *Verlauf*. Aktionen gibt es per Rechtsklick, L
 - **Änderungen:** Doppelklick oder Leertaste stagt bzw. unstagt eine Datei. Im Diff lassen sich
   einzelne Hunks oder per Klick/Umschalt-Klick einzelne Zeilen stagen, unstagen und verwerfen.
   Commit mit `Strg` + `⏎`, *Amend* lädt die letzte Nachricht.
-- **Verlauf:** Commit-Graph über alle Branches, Suche nach Text, Autor oder SHA. Rechtsklick auf
+- **Verlauf:** Commit-Graph über alle Branches, Suche nach Text, Autor oder SHA (lädt dafür ältere
+  Commits nach, bis 5000 automatisch, danach per Klick). Rechtsklick auf
   einen Commit: Branch oder Tag anlegen, auschecken, Cherry-Pick, Revert, Reset.
 - **Konflikte:** Bei Merge, Rebase, Cherry-Pick oder Revert zeigt ein Banner die offenen
   Konflikte mit *Fortsetzen* und *Abbrechen*. Klick auf eine Konfliktdatei öffnet den
@@ -104,7 +111,7 @@ dabei ist.
 
 ## Konten und Klonen
 
-*Konten* in der Fußzeile verwaltet GitHub- und GitLab-Konten, auch selbst gehostete
+*Konten* (Icon in der Suchleiste) verwaltet GitHub- und GitLab-Konten, auch selbst gehostete
 (Host-Feld, z. B. `gitlab.firma.de`). Anmelden geht per Personal Access Token oder mit
 *Von gh/glab übernehmen*, wenn die jeweilige CLI angemeldet ist. Nötige Token-Rechte:
 

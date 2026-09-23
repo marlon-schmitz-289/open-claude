@@ -48,28 +48,29 @@
   let pending: Promise<void> | null = null;
   let remoteNames = $state<string[]>([]);
 
-  function reload() {
+  /** keep: so viele Commits wie vorher laden, damit der Verlauf nach einer Aktion nicht an den Anfang springt. */
+  function reload(keep = 0) {
     gen++;
     pending = null;
     commits = [];
     skip = 0;
     done = false;
     git.remotes(repo).then((r) => (remoteNames = r.map((x) => x.name))).catch(() => {});
-    return loadMore();
+    return loadMore(Math.max(PAGE, keep));
   }
 
-  function loadMore(): Promise<void> {
+  function loadMore(n = PAGE): Promise<void> {
     if (done) return Promise.resolve();
     const g = gen;
     return (pending ??= (async () => {
       loading = true;
       error = "";
       try {
-        const page = await git.log(repo, null, skip, PAGE);
+        const page = await git.log(repo, null, skip, n);
         if (g !== gen) return;
         commits = [...commits, ...page];
         skip += page.length;
-        if (page.length < PAGE) done = true;
+        if (page.length < n) done = true;
       } catch (e) {
         if (g === gen) error = String(e);
       } finally {
@@ -84,7 +85,20 @@
   $effect(() => {
     repo;
     refreshKey;
-    untrack(reload); // reload liest loading/done, sonst Endlosschleife
+    // reload liest loading/done, sonst Endlosschleife
+    untrack(() => {
+      const top = list?.scrollTop ?? 0;
+      reload(commits.length)
+        .then(() => tick())
+        .then(() => list && (list.scrollTop = top));
+    });
+  });
+
+  // Suche sieht nur geladene Commits: dafuer automatisch nachladen (begrenzt, danach per Knopf weiter).
+  const SEARCH_STEP = 5000;
+  let searchUntil = $state(SEARCH_STEP);
+  $effect(() => {
+    if (filtered && filtered.length < 50 && !done && !loading && !error && skip < searchUntil) untrack(() => loadMore());
   });
 
   function onScroll() {
@@ -222,13 +236,14 @@
   }
 
   function reset(sha: string, mode: ResetMode) {
-    if (mode === "hard") {
-      askConfirm("Hart zurücksetzen", `HEAD hart auf ${sha.slice(0, 8)} zurücksetzen? Nicht committete Änderungen gehen verloren.`, async () => {
-        await git.reset(repo, sha, mode);
-      });
-    } else {
-      run(() => git.reset(repo, sha, mode));
-    }
+    // Auch soft/mixed schreibt den Branch um und liegt im Menue direkt neben Revert.
+    const [title, message] =
+      mode === "hard"
+        ? ["Hart zurücksetzen", `HEAD hart auf ${sha.slice(0, 8)} zurücksetzen? Nicht committete Änderungen gehen verloren.`]
+        : [`Zurücksetzen (${mode})`, `Branch auf ${sha.slice(0, 8)} zurücksetzen? Die Änderungen bleiben erhalten.`];
+    askConfirm(title, message, async () => {
+      await git.reset(repo, sha, mode);
+    });
   }
 </script>
 
@@ -263,6 +278,8 @@
       <button
         id="commit-{c.sha}"
         tabindex="-1"
+        role="option"
+        aria-selected={selected === c.sha}
         class="hover:bg-accent flex h-[26px] w-full items-center gap-2 px-2 text-left outline-none {selected ===
         c.sha
           ? 'bg-accent'
@@ -336,7 +353,8 @@
     <p class="bg-destructive/15 text-destructive border-destructive/30 border-b px-2 py-1 text-[11px]">{error}</p>
   {/if}
 
-  <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+  <!-- min-h-20: die Liste bleibt sichtbar, auch wenn die gespeicherte Detailhoehe nicht mehr ins Fenster passt -->
+  <div class="flex min-h-20 flex-1 flex-col overflow-hidden">
     <!-- Liste selbst ist fokussierbar: Pfeiltasten wechseln den Commit statt zu scrollen -->
     <div
       bind:this={list}
@@ -351,7 +369,16 @@
         {#each filtered as c (c.sha)}
           {@render commitRow(c, null)}
         {/each}
-        {#if filtered.length === 0}
+        {#if loading}
+          <p class="text-muted-foreground px-2 py-2 text-center text-[11px]">Durchsucht {skip} Commits …</p>
+        {:else if !done}
+          <button
+            class="text-muted-foreground hover:text-foreground w-full px-2 py-2 text-center text-[11px]"
+            onclick={() => ((searchUntil = skip + SEARCH_STEP), loadMore())}
+          >
+            {filtered.length ? "" : "Keine Treffer. "}Nur die letzten {skip} Commits durchsucht – weiter suchen
+          </button>
+        {:else if filtered.length === 0}
           <p class="text-muted-foreground px-2 py-4 text-center text-[11px]">Keine Treffer.</p>
         {/if}
       {:else}
@@ -359,16 +386,16 @@
           {@render commitRow(c, rows[i])}
         {/each}
         {#if loading}
-          <p class="text-muted-foreground px-2 py-2 text-center text-[11px]">Laedt …</p>
+          <p class="text-muted-foreground px-2 py-2 text-center text-[11px]">Lädt …</p>
         {/if}
       {/if}
     </div>
   </div>
 
   <Splitter bind:size={detailH} axis="y" min={80} invert key="git.detail" />
-  <div class="border-border shrink-0 overflow-y-auto border-t" style="height:{detailH}px; max-height:calc(100% - 80px)">
+  <div class="border-border min-h-0 overflow-y-auto border-t" style="height:{detailH}px">
     {#if detailLoading}
-      <p class="text-muted-foreground px-2 py-2 text-[11px]">Laedt …</p>
+      <p class="text-muted-foreground px-2 py-2 text-[11px]">Lädt …</p>
     {:else if detailError}
       <p class="text-destructive px-2 py-2 text-[11px]">{detailError}</p>
     {:else if detail}
@@ -423,7 +450,7 @@
     </Dialog.Header>
     <div class="flex justify-end gap-2">
       <Button variant="ghost" size="sm" onclick={() => (confirm = null)}>Abbrechen</Button>
-      <Button variant="destructive" size="sm" onclick={doConfirm}>Bestaetigen</Button>
+      <Button variant="destructive" size="sm" onclick={doConfirm}>Bestätigen</Button>
     </div>
   </Dialog.Content>
 </Dialog.Root>

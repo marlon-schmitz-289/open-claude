@@ -147,7 +147,7 @@ fn scan_blocking(root: String) -> Result<Vec<Repo>, String> {
     }
 
     let mut dirs = Vec::new();
-    let mut walker = WalkDir::new(&root).max_depth(4).into_iter();
+    let mut walker = WalkDir::new(&root).max_depth(6).into_iter();
     while let Some(entry) = walker.next() {
         let Ok(entry) = entry else { continue };
         if !entry.file_type().is_dir() {
@@ -332,7 +332,8 @@ pub fn run() {
             git::git_nesting,
             git::git_set_base,
             git::git_conflict,
-            git::git_resolve
+            git::git_resolve,
+            git::git_resolve_side
         ])
         .setup(|app| tray(app.handle()).map_err(Into::into))
         // Mit Tray versteckt Schliessen nur — raus kommt man dann ueber das Tray-Menue.
@@ -356,7 +357,21 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{branch_from_head, langs_in};
+    use super::{branch_from_head, langs_in, scan_blocking};
+
+    #[test]
+    fn findet_tief_verschachtelte_repos() {
+        let root = std::env::temp_dir().join(format!("ocui-scan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for p in ["a/b/c/d/tief/.git", "flach/.git", "node_modules/x/.git"] {
+            std::fs::create_dir_all(root.join(p)).unwrap();
+        }
+        let repos = scan_blocking(root.display().to_string()).unwrap();
+        let mut rels: Vec<String> = repos.iter().map(|r| r.rel.replace('\\', "/")).collect();
+        rels.sort();
+        assert_eq!(rels, ["a/b/c/d/tief", "flach"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()

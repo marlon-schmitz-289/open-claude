@@ -37,8 +37,8 @@
 
   function onKeyEvent(e: KeyboardEvent) {
     if (e.type !== "keydown") return true;
-    // Alt+E oeffnet den Explorer, das macht der App-Handler.
-    if (e.altKey && !e.ctrlKey && e.key.toLowerCase() === "e") return false;
+    // Alt+E (Explorer) und Alt+G (Git-Ansicht) macht der App-Handler.
+    if (e.altKey && !e.ctrlKey && ["e", "g"].includes(e.key.toLowerCase())) return false;
     // Umschalt+Esc fuehrt zur Liste zurueck; einfaches Esc bleibt bei claude (abbrechen, zurueckspringen).
     if (e.shiftKey && e.key === "Escape") return false;
     if (!e.ctrlKey) return true;

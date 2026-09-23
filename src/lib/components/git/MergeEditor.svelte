@@ -23,6 +23,8 @@
   let expanded = new SvelteSet<number>();
   let current = $state(0);
   let editing = $state(false);
+  // Per "Übernehmen" eingelesene Handarbeit; load() setzt choices zurueck, dirty muss sie trotzdem sehen.
+  let modified = $state(false);
   let draft = $state("");
   let busy = $state(false);
   let error = $state("");
@@ -50,6 +52,7 @@
     conflict = null;
     error = "";
     editing = false;
+    modified = false;
     git
       .conflict(r, p)
       .then((c) => {
@@ -75,7 +78,7 @@
 
   // Entscheidungen oder Handarbeit, die ein Schliessen/Ueberschreiben verwerfen wuerde.
   $effect(() => {
-    dirty = editing || choices.some(Boolean);
+    dirty = editing || modified || choices.some(Boolean);
   });
   const discardOk = () => !dirty || confirm("Entscheidungen und Änderungen im Merge-Editor verwerfen?");
 
@@ -86,6 +89,7 @@
   function whole(text: string | null) {
     if (text === null || !discardOk()) return;
     editing = false;
+    modified = false;
     load(text);
   }
 
@@ -98,6 +102,7 @@
   function applyEdit() {
     load(draft);
     editing = false;
+    modified = true;
   }
 
   async function save() {
@@ -107,6 +112,21 @@
     error = "";
     try {
       await git.resolve(repo, path, render(segments, choices));
+      modified = false;
+      onclose(true);
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  // Datei laesst sich nicht als Text laden (binaer): nur eine Seite komplett nehmen.
+  async function side(theirs: boolean) {
+    if (busy) return;
+    busy = true;
+    try {
+      await git.resolveSide(repo, path, theirs);
       onclose(true);
     } catch (e) {
       error = String(e);
@@ -133,9 +153,10 @@
 <svelte:window {onkeydown} />
 
 <div class="flex h-full min-h-0 flex-col text-xs">
-  <div class="bg-chrome border-border flex items-center gap-2 border-b px-3 py-1.5">
-    <span class="min-w-0 flex-1 truncate font-mono text-[11px]" title={path}>{path}</span>
-    <span class="text-[11px] tabular-nums {open.length ? 'text-destructive' : 'text-primary'}">
+  <!-- flex-wrap: im Standardfenster passen Pfad und alle Knoepfe nicht in eine Zeile -->
+  <div class="bg-chrome border-border flex flex-wrap items-center gap-2 border-b px-3 py-1.5">
+    <span class="min-w-0 grow basis-32 truncate font-mono text-[11px]" title={path}>{path}</span>
+    <span class="shrink-0 text-[11px] whitespace-nowrap tabular-nums {open.length ? 'text-destructive' : 'text-primary'}">
       {#if total}{open.length} von {total} offen{:else}keine Konfliktmarker{/if}
     </span>
     <Button variant="ghost" size="sm" class="h-6 px-1.5" onclick={() => jump(-1)} disabled={!total || editing} title="Vorheriger Konflikt (Umschalt+F7)">
@@ -160,7 +181,14 @@
   {/if}
 
   {#if !conflict}
-    {#if !error}<p class="text-muted-foreground px-3 py-6">Lade Konflikt …</p>{/if}
+    {#if !error}
+      <p class="text-muted-foreground px-3 py-6">Lade Konflikt …</p>
+    {:else}
+      <div class="flex min-h-0 flex-1 items-start gap-2 px-3 py-4">
+        <Button variant="outline" size="sm" class="text-xs" disabled={busy} onclick={() => side(false)}>Ours komplett übernehmen</Button>
+        <Button variant="outline" size="sm" class="text-xs" disabled={busy} onclick={() => side(true)}>Theirs komplett übernehmen</Button>
+      </div>
+    {/if}
   {:else if editing}
     <textarea
       class="bg-background min-h-0 flex-1 resize-none p-3 font-mono text-xs leading-5 outline-none"

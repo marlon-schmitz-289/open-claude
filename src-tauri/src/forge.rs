@@ -65,8 +65,10 @@ fn check_kind(kind: &str) -> Result<(), String> {
 /// "https://GitLab.firma.de/" -> "gitlab.firma.de". Nur Hostname[:Port], sonst ginge der Token sonstwohin.
 fn norm_host(host: &str) -> Result<String, String> {
     let h = host.trim();
-    let h = h.strip_prefix("https://").unwrap_or(h);
-    let h = h.trim_end_matches('/').to_ascii_lowercase();
+    // API spricht immer https (api_base), http:// wird also nur abgeschnitten.
+    let h = h.to_ascii_lowercase();
+    let h = h.strip_prefix("https://").or(h.strip_prefix("http://")).unwrap_or(&h);
+    let h = h.trim_end_matches('/').to_string();
     let ok = !h.is_empty()
         && h.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':'));
     if ok {
@@ -112,8 +114,15 @@ async fn api_get(kind: &str, host: &str, tok: &str, path: &str, query: &[(&str, 
     let client = reqwest::Client::builder()
         .user_agent("ocui")
         .timeout(Duration::from_secs(30))
-        // PRIVATE-TOKEN wuerde bei Redirects auf fremde Hosts mitgeschickt
-        .redirect(reqwest::redirect::Policy::none())
+        // Umbenannte Repos antworten mit 301 auf denselben Host. Fremde Hosts nie:
+        // reqwest wuerde PRIVATE-TOKEN dorthin mitschicken.
+        .redirect(reqwest::redirect::Policy::custom(|a| {
+            let first = &a.previous()[0];
+            let same = a.url().scheme() == "https"
+                && a.url().host_str() == first.host_str()
+                && a.url().port_or_known_default() == first.port_or_known_default();
+            if same && a.previous().len() < 5 { a.follow() } else { a.stop() }
+        }))
         .build()
         .map_err(|e| e.to_string())?;
     let req = client.get(format!("{}{path}", api_base(kind, host))).query(query);
@@ -127,10 +136,20 @@ async fn api_get(kind: &str, host: &str, tok: &str, path: &str, query: &[(&str, 
     let status = res.status();
     let body: Value = res.json().await.unwrap_or(Value::Null);
     if !status.is_success() {
-        let msg = body["message"].as_str().or(body["error"].as_str()).unwrap_or("");
-        return Err(format!("{host} antwortet mit {status} {msg}").trim().to_string());
+        return Err(api_error(host, status, &body));
     }
     Ok(body)
+}
+
+fn api_error(host: &str, status: reqwest::StatusCode, body: &Value) -> String {
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return format!("{host}: Token ungültig oder abgelaufen (401)");
+    }
+    let msg = body["message"].as_str().or(body["error"].as_str()).unwrap_or("");
+    // GitLab schickt z. B. {"message":"403 Forbidden"}, das stuende sonst doppelt da.
+    let msg = if status.to_string().contains(msg) { "" } else { msg };
+    let hint = if status == reqwest::StatusCode::FORBIDDEN { " (Token ohne Rechte?)" } else { "" };
+    format!("{host} antwortet mit {status}{hint} {msg}").trim().to_string()
 }
 
 fn s(v: &Value) -> String {
@@ -513,5 +532,131 @@ mod tests {
         assert!(!valid_url("file:///C:/Windows/system32/calc.exe"));
         assert!(!valid_url("https://x.de\" & calc"));
         assert!(!valid_url("C:\\Windows"));
+    }
+
+    #[test]
+    fn parst_weitere_remote_formen() {
+        assert_eq!(p("http://GitLab.local/g/p"), hp("gitlab.local", "g/p"));
+        assert_eq!(p("github.com:o/r.git"), hp("github.com", "o/r"));
+        assert_eq!(p("git://github.com/o/r.git"), hp("github.com", "o/r"));
+        assert_eq!(p("  https://github.com/o/r.git/  "), hp("github.com", "o/r"));
+        assert_eq!(p("https://user:pa@ss@github.com/o/r"), hp("github.com", "o/r"));
+        assert_eq!(p("D:\\x\\repo"), None);
+        assert_eq!(p(""), None);
+        assert_eq!(encode("a b/ü"), "a%20b%2F%C3%BC");
+    }
+
+    #[test]
+    fn open_url_grenzen() {
+        assert!(valid_url("HTTPS://github.com/x"));
+        assert!(!valid_url("https://"));
+        assert!(!valid_url("javascript:alert(1)"));
+        assert!(!valid_url("https://a.de\nb"));
+        assert!(!valid_url("ms-settings:"));
+    }
+
+    // Nutzer tippen die Host-URL oft mit http:// oder in Grossbuchstaben ab.
+    #[test]
+    fn norm_host_nimmt_http_und_grossgeschriebenes_schema() {
+        assert_eq!(norm_host("HTTPS://gitlab.com").unwrap(), "gitlab.com");
+        assert_eq!(norm_host("http://gitlab.firma.de").unwrap(), "gitlab.firma.de");
+        assert!(norm_host("ftp://x.de").is_err());
+    }
+
+    #[test]
+    fn api_fehlermeldung_lesbar_und_ohne_dopplung() {
+        use reqwest::StatusCode as S;
+        let e = api_error("gitlab.com", S::UNAUTHORIZED, &serde_json::json!({"message": "401 Unauthorized"}));
+        assert_eq!(e, "gitlab.com: Token ungültig oder abgelaufen (401)");
+        let e = api_error("gitlab.com", S::FORBIDDEN, &serde_json::json!({"message": "403 Forbidden"}));
+        assert_eq!(e, "gitlab.com antwortet mit 403 Forbidden (Token ohne Rechte?)");
+        let e = api_error("github.com", S::NOT_FOUND, &serde_json::json!({"message": "Not Found"}));
+        assert_eq!(e, "github.com antwortet mit 404 Not Found");
+        let e = api_error("github.com", S::UNPROCESSABLE_ENTITY, &serde_json::json!({"message": "Validation Failed"}));
+        assert!(e.ends_with("Validation Failed"), "{e}");
+    }
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("ocui-forge-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let ok = std::process::Command::new("git").current_dir(dir).args(args).status().unwrap().success();
+        assert!(ok, "git {args:?}");
+    }
+
+    #[test]
+    fn klont_lokal_mit_fortschritt_und_prueft_ziel() {
+        let root = tmp("clone");
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        git(&src, &["init", "-q", "-b", "main"]);
+        std::fs::write(src.join("a.txt"), "x").unwrap();
+        git(&src, &["add", "."]);
+        git(&src, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"]);
+        let url = format!("file:///{}", src.display().to_string().replace('\\', "/"));
+
+        // Leerer, existierender Ordner ist erlaubt.
+        let empty = root.join("leer");
+        std::fs::create_dir_all(&empty).unwrap();
+        let lines = std::sync::Mutex::new(Vec::new());
+        let dest = empty.display().to_string();
+        let r = clone_blocking(url.clone(), dest.clone(), |p| lines.lock().unwrap().push((p.line, p.percent)));
+        assert_eq!(r, Ok(dest));
+        assert!(empty.join("a.txt").is_file());
+        assert!(!lines.lock().unwrap().is_empty());
+
+        // Nicht leer -> Fehler, kein git-Aufruf.
+        let r = clone_blocking(url.clone(), empty.display().to_string(), |_| {});
+        assert!(r.unwrap_err().contains("nicht leer"));
+        // Ziel ist eine Datei.
+        let file = root.join("datei");
+        std::fs::write(&file, "x").unwrap();
+        assert!(clone_blocking(url.clone(), file.display().to_string(), |_| {}).is_err());
+        // Option-Injection.
+        assert!(clone_blocking("--upload-pack=calc".into(), root.join("n").display().to_string(), |_| {}).is_err());
+        // Nicht existierende Quelle: git-Meldung kommt durch, Ziel bleibt nicht zurueck.
+        let bad = root.join("bad");
+        let e = clone_blocking(format!("{url}-fehlt"), bad.display().to_string(), |_| {}).unwrap_err();
+        assert!(e.contains("fatal") || e.contains("does not"), "{e}");
+        assert!(!bad.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn api_fehler_bei_netzfehler_ohne_token_im_text() {
+        let e = tauri::async_runtime::block_on(api_get("gitlab", "127.0.0.1:1", "GEHEIM123", "/user", &[]))
+            .unwrap_err();
+        assert!(e.contains("nicht erreichbar"), "{e}");
+        assert!(!e.contains("GEHEIM123"));
+    }
+
+    // Echter, lesender Aufruf gegen gitlab.com; offline wird nur uebersprungen.
+    #[test]
+    fn api_401_mit_falschem_token() {
+        match tauri::async_runtime::block_on(api_get("gitlab", "gitlab.com", "glpat-falsch", "/user", &[])) {
+            Err(e) if e.contains("nicht erreichbar") => {}
+            Err(e) => {
+                assert!(e.contains("401"), "{e}");
+                assert!(!e.contains("glpat-falsch"));
+            }
+            Ok(v) => panic!("unerwartet ok: {v}"),
+        }
+    }
+
+    // gitlab-org/gitlab-ce wurde umbenannt; die API antwortet mit 301 auf denselben Host.
+    #[test]
+    fn api_folgt_redirect_auf_gleichem_host() {
+        let r = tauri::async_runtime::block_on(api_get(
+            "gitlab",
+            "gitlab.com",
+            "",
+            "/projects/gitlab-org%2Fgitlab-ce/merge_requests",
+            &[("state", "opened".into()), ("per_page", "1".into())],
+        ));
+        // offline: uebersprungen wie api_401_mit_falschem_token
+        assert!(r.is_ok() || r.as_ref().is_err_and(|e| e.contains("nicht erreichbar")), "{r:?}");
     }
 }

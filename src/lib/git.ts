@@ -139,6 +139,9 @@ export const git = {
   /** Schreibt den aufgeloesten Inhalt und staged die Datei. */
   resolve: (repo: string, path: string, content: string) =>
     call<void>("git_resolve", { repo, path, content }),
+  /** Ganze Seite uebernehmen und stagen, auch fuer Binaerdateien. */
+  resolveSide: (repo: string, path: string, theirs: boolean) =>
+    call<void>("git_resolve_side", { repo, path, theirs }),
 };
 
 // ---------- GitHub / GitLab ----------

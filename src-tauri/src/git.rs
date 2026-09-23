@@ -152,7 +152,7 @@ fn text(bytes: &[u8]) -> String {
 fn strict(bytes: Vec<u8>) -> Result<String, String> {
     match String::from_utf8(bytes) {
         Ok(s) if !s.contains('\0') => Ok(s),
-        _ => Err("Binär- oder Nicht-UTF-8-Datei, bitte ours/theirs extern wählen".into()),
+        _ => Err("Binär- oder Nicht-UTF-8-Datei: Ours oder Theirs komplett übernehmen".into()),
     }
 }
 
@@ -224,7 +224,12 @@ fn branch_name<'a>(repo: &str, name: &'a str) -> Result<&'a str, String> {
 fn inside(repo: &str, path: &str) -> Result<PathBuf, String> {
     let p = Path::new(path);
     let bad = |c: Component| match c {
-        Component::Normal(n) => n.eq_ignore_ascii_case(".git"),
+        // Windows oeffnet ".git." bzw. ".git " als .git, der 8.3-Kurzname ist GIT~1.
+        Component::Normal(n) => {
+            let n = n.to_string_lossy();
+            let n = n.trim_end_matches(['.', ' ']);
+            n.eq_ignore_ascii_case(".git") || n.eq_ignore_ascii_case("git~1")
+        }
         _ => true,
     };
     if path.is_empty() || p.components().any(bad) {
@@ -250,7 +255,14 @@ fn has_conflicts(repo: &str) -> bool {
 fn tolerate(repo: &str, cmd: &mut Command) -> Result<String, String> {
     let before = has_conflicts(repo);
     match talk(cmd) {
-        Err(msg) if !before && has_conflicts(repo) => Ok(msg),
+        // Stash: Konflikt im getrackten Teil, aber untracked Dateien fehlen -> echter Fehler.
+        Err(msg)
+            if !before
+                && has_conflicts(repo)
+                && !msg.contains("could not restore untracked files") =>
+        {
+            Ok(msg)
+        }
         res => res,
     }
 }
@@ -678,6 +690,10 @@ fn checkout(repo: &str, target: &str, create: bool, start: Option<&str>) -> Resu
         cmd.args(["switch", "-c", branch_name(repo, target)?]);
         if let Some(s) = start {
             cmd.arg(arg(s)?);
+            // "Neuer Branch ab origin/main" soll nicht origin/main tracken, sonst scheitert push.
+            if split_remote(&remotes(repo)?, s).is_some_and(|(_, b)| b != target) {
+                cmd.arg("--no-track");
+            }
         }
         return talk(&mut cmd);
     }
@@ -932,6 +948,17 @@ fn conflict(repo: &str, path: &str) -> Result<Conflict, String> {
         // Geloescht auf einer Seite: Arbeitsdatei kann fehlen.
         merged: std::fs::read(&file).map_or(Ok(String::new()), strict)?,
     })
+}
+
+/// Ganze Seite uebernehmen, auch fuer Binaerdateien, die der Merge-Editor nicht laden kann.
+fn resolve_side(repo: &str, path: &str, theirs: bool) -> Result<(), String> {
+    inside(repo, path)?;
+    if out(lit(repo).args(["ls-files", "-u", "--", path]))?.trim().is_empty() {
+        return Err(format!("{path} steht nicht im Konflikt."));
+    }
+    let side = if theirs { "--theirs" } else { "--ours" };
+    out(lit(repo).args(["checkout", side, "--", path]))?;
+    out(lit(repo).args(["add", "--", path])).map(|_| ())
 }
 
 fn resolve(repo: &str, path: &str, content: &str) -> Result<(), String> {
@@ -1248,6 +1275,11 @@ pub async fn git_resolve(repo: String, path: String, content: String) -> Result<
     blocking(move || resolve(&repo, &path, &content)).await
 }
 
+#[tauri::command]
+pub async fn git_resolve_side(repo: String, path: String, theirs: bool) -> Result<(), String> {
+    blocking(move || resolve_side(&repo, &path, theirs)).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1366,6 +1398,10 @@ refs/remotes/origin/feature/x\x1f \x1f\x1f\x1fs3\x1fd\x1fsub: mit doppelpunkt\n"
         assert!(inside("C:/r", "C:/x").is_err());
         assert!(inside("C:/r", "").is_err());
         assert!(inside("C:/r", ".GIT/hooks/pre-commit").is_err());
+        assert!(inside("C:/r", ".git./config").is_err());
+        assert!(inside("C:/r", "a/.git . /config").is_err());
+        assert!(inside("C:/r", "GIT~1/config").is_err());
+        assert!(inside("C:/r", ".gitignore").is_ok());
         assert!(arg("-x").is_err() && arg("main").is_ok());
     }
 
@@ -1548,5 +1584,846 @@ refs/remotes/origin/feature/x\x1f \x1f\x1f\x1fs3\x1fd\x1fsub: mit doppelpunkt\n"
             serde_json::to_string(&RepoState::CherryPick).unwrap(),
             "\"cherry-pick\""
         );
+    }
+
+    // ---------- Szenario-Matrix gegen echte Repos ----------
+
+    struct Tmp(PathBuf);
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn cfg(r: &str, name: &str) {
+        for (k, val) in [
+            ("user.name", name),
+            ("user.email", "t@x.de"),
+            ("commit.gpgsign", "false"),
+            ("tag.gpgsign", "false"),
+            ("core.autocrlf", "false"),
+            ("pull.rebase", "false"),
+        ] {
+            out(git(r).args(["config", k, val])).unwrap();
+        }
+    }
+
+    /// Frisches Repo (main, eigener Autor, autocrlf aus) in %TEMP%.
+    fn fresh(name: &str) -> (Tmp, String) {
+        let dir = std::env::temp_dir().join(format!("ocui-m-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let r = dir.to_str().unwrap().to_string();
+        out(git(&r).args(["init", "-q", "-b", "main"])).unwrap();
+        cfg(&r, "Test");
+        (Tmp(dir), r)
+    }
+
+    fn put(r: &str, p: &str, s: impl AsRef<[u8]>) {
+        let f = Path::new(r).join(p);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, s).unwrap();
+    }
+
+    fn v(x: &[&str]) -> Vec<String> {
+        x.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn ci(r: &str, p: &str, s: &str, msg: &str) -> String {
+        put(r, p, s);
+        stage(r, &v(&[p])).unwrap();
+        commit(r, msg, false).unwrap()
+    }
+
+    fn file<'a>(s: &'a Status, p: &str) -> Option<&'a FileChange> {
+        s.files.iter().find(|f| f.path == p)
+    }
+
+    fn bare(r: &str) -> (Tmp, String) {
+        let b = format!("{r}-remote.git");
+        let _ = std::fs::remove_dir_all(&b);
+        out(git(r).args(["init", "-q", "--bare", "-b", "main", &b])).unwrap();
+        out(git(r).args(["remote", "add", "origin", &b])).unwrap();
+        (Tmp(PathBuf::from(&b)), b)
+    }
+
+    fn clone(src: &str, name: &str) -> (Tmp, String) {
+        let dir = std::env::temp_dir().join(format!("ocui-m-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let r = dir.to_str().unwrap().to_string();
+        out(git(src).args(["clone", "-q", src, &r])).unwrap();
+        cfg(&r, "Zwei");
+        (Tmp(dir), r)
+    }
+
+    #[test]
+    fn m_leeres_repo() {
+        let (_t, r) = fresh("leer");
+        assert!(log(&r, None, 0, 10).unwrap().is_empty());
+        assert!(branches(&r).unwrap().is_empty());
+        assert!(tags(&r).unwrap().is_empty());
+        assert!(stashes(&r).unwrap().is_empty());
+        assert!(remotes(&r).unwrap().is_empty());
+        assert_eq!(status(&r).unwrap().state, RepoState::Clean);
+        assert!(push(&r, false).is_err());
+        assert!(commit(&r, "leer", false).is_err());
+        assert!(commit(&r, "x", true).is_err());
+        put(&r, "a.txt", "a\n");
+        assert!(diff(&r, Some("a.txt"), false).unwrap().contains("+a"));
+        discard(&r, &v(&["a.txt"])).unwrap();
+        assert!(!Path::new(&r).join("a.txt").exists());
+        put(&r, "b.txt", "1\n2\n");
+        stage(&r, &v(&["b.txt"])).unwrap();
+        assert!(diff(&r, Some("b.txt"), true).unwrap().contains("+2"));
+        unstage(&r, &v(&["b.txt"])).unwrap();
+        assert_eq!(file(&status(&r).unwrap(), "b.txt").unwrap().index, "?");
+        assert!(stash_push(&r, None, true).is_err());
+    }
+
+    #[test]
+    fn m_detached_head() {
+        let (_t, r) = fresh("detached");
+        let c1 = ci(&r, "a.txt", "1\n", "eins");
+        ci(&r, "a.txt", "2\n", "zwei");
+        checkout(&r, &c1, false, None).unwrap();
+        let s = status(&r).unwrap();
+        assert_eq!((s.branch.as_deref(), s.head.as_str()), (None, c1.as_str()));
+        let c3 = ci(&r, "a.txt", "3\n", "lose");
+        assert!(log(&r, None, 0, 10).unwrap().iter().any(|c| c.sha == c3));
+        assert!(push(&r, false).unwrap_err().contains("Detached"));
+        assert!(branches(&r).unwrap().iter().all(|b| !b.current));
+        checkout(&r, "rettung", true, None).unwrap();
+        assert_eq!(status(&r).unwrap().branch.as_deref(), Some("rettung"));
+    }
+
+    #[test]
+    fn m_upstream_fehlt_und_gone() {
+        let (_t, r) = fresh("gone");
+        let _b = bare(&r);
+        ci(&r, "a.txt", "1\n", "eins");
+        push(&r, false).unwrap();
+        checkout(&r, "feature/tief/x", true, None).unwrap();
+        assert_eq!(status(&r).unwrap().upstream, None);
+        ci(&r, "b.txt", "b\n", "b");
+        push(&r, false).unwrap();
+        let s = status(&r).unwrap();
+        assert_eq!(s.upstream.as_deref(), Some("origin/feature/tief/x"));
+        assert_eq!((s.ahead, s.behind), (0, 0));
+        ci(&r, "b.txt", "bb\n", "bb");
+        assert_eq!(status(&r).unwrap().ahead, 1);
+        out(git(&r).args(["push", "-q", "origin", "--delete", "feature/tief/x"])).unwrap();
+        talk(git(&r).args(["fetch", "--all", "--prune"])).unwrap();
+        let s = status(&r).unwrap();
+        assert_eq!(s.upstream.as_deref(), Some("origin/feature/tief/x"));
+        assert_eq!((s.ahead, s.behind), (0, 0));
+        let b = branches(&r).unwrap();
+        let f = b.iter().find(|b| b.name == "feature/tief/x").unwrap();
+        assert_eq!((f.ahead, f.behind), (0, 0));
+        push(&r, false).unwrap();
+        assert!(ref_exists(&r, "refs/remotes/origin/feature/tief/x"));
+    }
+
+    #[test]
+    fn m_push_neuer_branch_ab_remote_branch() {
+        // Sidebar "Neuer Branch ab hier" auf origin/main: checkout(v, true, "origin/main")
+        let (_t, r) = fresh("ab-remote");
+        let _b = bare(&r);
+        ci(&r, "a.txt", "1\n", "eins");
+        push(&r, false).unwrap();
+        checkout(&r, "feature/neu", true, Some("origin/main")).unwrap();
+        ci(&r, "b.txt", "b\n", "b");
+        let res = push(&r, false);
+        assert!(res.is_ok(), "{res:?}");
+        assert!(ref_exists(&r, "refs/remotes/origin/feature/neu"));
+    }
+
+    #[test]
+    fn m_remote_checkout_lokal_existiert() {
+        let (_t, r) = fresh("rlokal");
+        let _b = bare(&r);
+        ci(&r, "a.txt", "1\n", "eins");
+        push(&r, false).unwrap();
+        checkout(&r, "x/y", true, None).unwrap();
+        push(&r, false).unwrap();
+        ci(&r, "a.txt", "2\n", "lokal weiter");
+        checkout(&r, "main", false, None).unwrap();
+        // Backend-Weg: vorhandenen lokalen Branch nehmen
+        checkout(&r, "origin/x/y", false, None).unwrap();
+        assert_eq!(status(&r).unwrap().branch.as_deref(), Some("x/y"));
+        checkout(&r, "main", false, None).unwrap();
+        // Frontend-Weg (Sidebar checkoutRemote): create=true scheitert, wenn der lokale existiert
+        let res = checkout(&r, "x/y", true, Some("origin/x/y"));
+        assert!(res.is_err(), "{res:?}");
+    }
+
+    fn git_rename(r: &str, from: &str, to: &str) -> Result<(), String> {
+        arg(from)?;
+        let to = branch_name(r, to)?;
+        out(git(r).args(["branch", "-m", from, to])).map(|_| ())
+    }
+
+    #[test]
+    fn m_pfade_und_namen_mit_sonderzeichen() {
+        let (_t, r) = fresh("sonder");
+        ci(&r, "start.txt", "s\n", "start");
+        for p in [
+            "ordner mit leer/dätei ü.txt",
+            "it's.txt",
+            "[x].txt",
+            "-strich.txt",
+            "#raute.txt",
+            "tab\u{e9}.txt",
+        ] {
+            put(&r, p, "x\n");
+            let st = status(&r).unwrap();
+            assert!(file(&st, p).is_some(), "{p} fehlt in {:?}", st.files);
+            let patch = diff(&r, Some(p), false).unwrap();
+            assert!(patch.contains("+x"), "{p}");
+            // Neue Datei per Hunk-Patch ins Index
+            apply(&r, &patch, true, false).unwrap_or_else(|e| panic!("{p}: {e}"));
+            assert_eq!(file(&status(&r).unwrap(), p).unwrap().index, "A", "{p}");
+            unstage(&r, &v(&[p])).unwrap();
+            stage(&r, &v(&[p])).unwrap();
+            commit(&r, &format!("add {p}"), false).unwrap();
+            put(&r, p, "y\n");
+            let patch = diff(&r, Some(p), false).unwrap();
+            apply(&r, &patch, false, true).unwrap_or_else(|e| panic!("{p}: {e}"));
+            assert!(status(&r).unwrap().files.is_empty(), "{p}");
+        }
+        for b in ["feature/ümlaut", "it's", "a.b/c-d_e"] {
+            checkout(&r, b, true, None).unwrap_or_else(|e| panic!("{b}: {e}"));
+            assert_eq!(status(&r).unwrap().branch.as_deref(), Some(b));
+            checkout(&r, "main", false, None).unwrap();
+        }
+        assert!(branches(&r).unwrap().iter().any(|b| b.name == "it's"));
+        git_rename(&r, "it's", "umbenannt/ö").unwrap();
+        assert!(branches(&r).unwrap().iter().any(|b| b.name == "umbenannt/ö"));
+        for bad in ["mit leer", "a..b", "x~1", "-x", "", "HEAD", "a:b", "ende."] {
+            assert!(checkout(&r, bad, true, None).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn m_renames() {
+        let (_t, r) = fresh("rename");
+        ci(&r, "alt ä.txt", "inhalt\nzeile\n", "start");
+        std::fs::rename(Path::new(&r).join("alt ä.txt"), Path::new(&r).join("neu ö.txt")).unwrap();
+        let st = status(&r).unwrap();
+        assert_eq!(file(&st, "alt ä.txt").unwrap().worktree, "D");
+        assert_eq!(file(&st, "neu ö.txt").unwrap().index, "?");
+        stage(&r, &v(&["alt ä.txt", "neu ö.txt"])).unwrap();
+        let st = status(&r).unwrap();
+        let f = file(&st, "neu ö.txt").unwrap();
+        assert_eq!((f.index.as_str(), f.orig.as_deref()), ("R", Some("alt ä.txt")));
+        put(&r, "neu ö.txt", "inhalt\nzeile\nmehr\n");
+        let st = status(&r).unwrap();
+        let f = file(&st, "neu ö.txt").unwrap();
+        assert_eq!((f.index.as_str(), f.worktree.as_str()), ("R", "M"));
+        assert!(diff(&r, Some("neu ö.txt"), false).unwrap().contains("+mehr"));
+        discard(&r, &v(&["neu ö.txt"])).unwrap();
+        assert_eq!(file(&status(&r).unwrap(), "neu ö.txt").unwrap().worktree, ".");
+        let c = commit(&r, "rename", false).unwrap();
+        let d = show(&r, &c).unwrap().diff;
+        assert!(d.contains("rename from alt ä.txt") && d.contains("rename to neu ö.txt"), "{d}");
+    }
+
+    #[test]
+    fn m_binaer_crlf_newline_gross() {
+        let (_t, r) = fresh("binaer");
+        let bin: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
+        put(&r, "bild.bin", &bin);
+        assert!(diff(&r, Some("bild.bin"), false).unwrap().contains("Binary"));
+        stage(&r, &v(&["bild.bin"])).unwrap();
+        put(&r, "crlf.txt", "a\r\nb\r\nc\r\n");
+        put(&r, "ohne.txt", "a\nb");
+        stage(&r, &v(&["crlf.txt", "ohne.txt"])).unwrap();
+        let c = commit(&r, "start", false).unwrap();
+        assert!(show(&r, &c).unwrap().diff.contains("Binary"));
+        put(&r, "bild.bin", &bin[..100]);
+        assert!(diff(&r, Some("bild.bin"), false).unwrap().contains("Binary"));
+        discard(&r, &v(&["bild.bin"])).unwrap();
+        assert_eq!(std::fs::read(Path::new(&r).join("bild.bin")).unwrap(), bin);
+
+        // CRLF im Repo: Hunk stagen und in der Arbeitskopie zuruecknehmen
+        put(&r, "crlf.txt", "a\r\nB\r\nc\r\nd\r\n");
+        let p = diff(&r, Some("crlf.txt"), false).unwrap();
+        assert!(p.contains("+B\r\n"));
+        apply(&r, &p, true, false).unwrap();
+        assert!(diff(&r, Some("crlf.txt"), false).unwrap().is_empty());
+        apply(&r, &p, true, true).unwrap();
+        apply(&r, &p, false, true).unwrap();
+        assert_eq!(std::fs::read_to_string(Path::new(&r).join("crlf.txt")).unwrap(), "a\r\nb\r\nc\r\n");
+
+        // Ohne Newline am Ende
+        put(&r, "ohne.txt", "a\nb\nc");
+        let p = diff(&r, Some("ohne.txt"), false).unwrap();
+        assert!(p.contains("\\ No newline at end of file"));
+        apply(&r, &p, true, false).unwrap();
+        assert!(diff(&r, Some("ohne.txt"), true).unwrap().contains("+c"));
+        apply(&r, &p, true, true).unwrap();
+        apply(&r, &p, false, true).unwrap();
+        assert_eq!(std::fs::read_to_string(Path::new(&r).join("ohne.txt")).unwrap(), "a\nb");
+
+        // Gross: ~5 MB Textdatei, Patch ueber stdin
+        let big: String = (0..400_000).map(|i| format!("zeile {i}\n")).collect();
+        put(&r, "gross.txt", &big);
+        stage(&r, &v(&["gross.txt"])).unwrap();
+        commit(&r, "gross", false).unwrap();
+        let big2: String = (0..400_000).map(|i| format!("{} {i}\n", if i % 2 == 0 { "ZEILE" } else { "zeile" })).collect();
+        put(&r, "gross.txt", &big2);
+        let p = diff(&r, Some("gross.txt"), false).unwrap();
+        assert!(p.len() > 1_000_000);
+        apply(&r, &p, true, false).unwrap();
+        assert!(diff(&r, Some("gross.txt"), false).unwrap().is_empty());
+    }
+
+    #[test]
+    fn m_crlf_mit_autocrlf() {
+        // Git fuer Windows setzt core.autocrlf=true systemweit.
+        let (_t, r) = fresh("autocrlf");
+        out(git(&r).args(["config", "core.autocrlf", "true"])).unwrap();
+        ci(&r, "a.txt", "eins\ndrei\n", "start");
+        put(&r, "a.txt", "eins\r\nzwei\r\ndrei\r\nvier\r\n");
+        let p = diff(&r, Some("a.txt"), false).unwrap();
+        apply(&r, &p, true, false).unwrap();
+        assert!(diff(&r, Some("a.txt"), false).unwrap().is_empty());
+        apply(&r, &p, true, true).unwrap();
+        apply(&r, &p, false, true).unwrap();
+        let s = status(&r).unwrap();
+        assert!(s.files.is_empty(), "{:?}", s.files);
+    }
+
+    #[test]
+    fn m_submodul() {
+        let (_t, sub) = fresh("sub-quelle");
+        ci(&sub, "s.txt", "s\n", "s");
+        let (_t2, r) = fresh("sub-haupt");
+        ci(&r, "a.txt", "a\n", "a");
+        out(git(&r).args(["-c", "protocol.file.allow=always", "submodule", "add", "-q", &sub, "libs/sub"])).unwrap();
+        let st = status(&r).unwrap();
+        assert!(file(&st, "libs/sub").is_some(), "{:?}", st.files);
+        commit(&r, "submodul", false).unwrap();
+        let inner = format!("{r}/libs/sub");
+        cfg(&inner, "Innen");
+        ci(&inner, "s.txt", "neu\n", "neu");
+        let st = status(&r).unwrap();
+        assert_eq!(file(&st, "libs/sub").unwrap().worktree, "M");
+        assert!(diff(&r, Some("libs/sub"), false).unwrap().contains("Subproject commit"));
+        stage(&r, &v(&["libs/sub"])).unwrap();
+        assert_eq!(file(&status(&r).unwrap(), "libs/sub").unwrap().index, "M");
+        unstage(&r, &v(&["libs/sub"])).unwrap();
+        assert_eq!(file(&status(&r).unwrap(), "libs/sub").unwrap().index, ".");
+        put(&inner, "s.txt", "dreckig\n");
+        assert!(file(&status(&r).unwrap(), "libs/sub").is_some());
+    }
+
+    #[test]
+    fn m_merge_konflikt_abort_und_modify_delete() {
+        let (_t, r) = fresh("merge");
+        ci(&r, "a.txt", "1\n2\n3\n", "start");
+        ci(&r, "weg.txt", "w\n", "weg");
+        checkout(&r, "f", true, None).unwrap();
+        ci(&r, "a.txt", "1\nF\n3\n", "f");
+        ci(&r, "weg.txt", "f aendert\n", "f weg");
+        checkout(&r, "main", false, None).unwrap();
+        ci(&r, "a.txt", "1\nM\n3\n", "m");
+        std::fs::remove_file(Path::new(&r).join("weg.txt")).unwrap();
+        stage(&r, &v(&["weg.txt"])).unwrap();
+        commit(&r, "m loescht", false).unwrap();
+
+        merge(&r, "f", false).unwrap();
+        assert_eq!(status(&r).unwrap().state, RepoState::Merge);
+        assert!(sequencer(&r, "--continue").is_err());
+        sequencer(&r, "--abort").unwrap();
+        let s = status(&r).unwrap();
+        assert_eq!(s.state, RepoState::Clean);
+        assert!(s.files.is_empty());
+
+        merge(&r, "f", true).unwrap();
+        let st = status(&r).unwrap();
+        assert!(file(&st, "weg.txt").unwrap().conflict, "{:?}", st.files);
+        let c = conflict(&r, "weg.txt").unwrap();
+        assert!(c.ours.is_none() && c.theirs.is_some() && c.base.is_some());
+        resolve(&r, "a.txt", "1\nMF\n3\n").unwrap();
+        resolve(&r, "weg.txt", "f aendert\n").unwrap();
+        assert!(resolve(&r, "a.txt", "x").is_err(), "schon geloest");
+        sequencer(&r, "--continue").unwrap();
+        assert_eq!(status(&r).unwrap().state, RepoState::Clean);
+        let l = log(&r, Some("main"), 0, 1).unwrap();
+        assert_eq!(l[0].parents.len(), 2);
+        // Merge scheitert wegen lokaler Aenderungen: echter Fehler, kein Zustand
+        checkout(&r, "g", true, Some("f")).unwrap();
+        ci(&r, "a.txt", "G\n", "g");
+        checkout(&r, "main", false, None).unwrap();
+        put(&r, "a.txt", "lokal\n");
+        assert!(merge(&r, "g", false).is_err());
+        assert_eq!(status(&r).unwrap().state, RepoState::Clean);
+    }
+
+    #[test]
+    fn m_binaer_konflikt() {
+        let (_t, r) = fresh("binkonf");
+        put(&r, "b.bin", [0u8, 1, 2, 3]);
+        stage(&r, &v(&["b.bin"])).unwrap();
+        commit(&r, "start", false).unwrap();
+        checkout(&r, "f", true, None).unwrap();
+        put(&r, "b.bin", [0u8, 9, 9]);
+        stage(&r, &v(&["b.bin"])).unwrap();
+        commit(&r, "f", false).unwrap();
+        checkout(&r, "main", false, None).unwrap();
+        put(&r, "b.bin", [0u8, 7, 7]);
+        stage(&r, &v(&["b.bin"])).unwrap();
+        commit(&r, "m", false).unwrap();
+        merge(&r, "f", false).unwrap();
+        assert!(file(&status(&r).unwrap(), "b.bin").unwrap().conflict);
+        assert!(conflict(&r, "b.bin").is_err());
+        assert!(resolve_side(&r, "nicht-im-konflikt.txt", true).is_err());
+        resolve_side(&r, "b.bin", true).unwrap();
+        sequencer(&r, "--continue").unwrap();
+        assert_eq!(std::fs::read(Path::new(&r).join("b.bin")).unwrap(), [0u8, 9, 9]);
+    }
+
+    fn konflikt_setup(name: &str) -> (Tmp, String, String) {
+        let (t, r) = fresh(name);
+        ci(&r, "a.txt", "1\n2\n3\n", "start");
+        checkout(&r, "f", true, None).unwrap();
+        let f = ci(&r, "a.txt", "1\nF\n3\n", "f");
+        checkout(&r, "main", false, None).unwrap();
+        ci(&r, "a.txt", "1\nM\n3\n", "m");
+        (t, r, f)
+    }
+
+    #[test]
+    fn m_rebase_konflikt_geloest_als_leer() {
+        let (_t, r, _) = konflikt_setup("rebase");
+        checkout(&r, "f", false, None).unwrap();
+        ci(&r, "b.txt", "b\n", "f2");
+        rebase_onto(&r, "main").unwrap();
+        assert_eq!(status(&r).unwrap().state, RepoState::Rebase);
+        // Loesung = main-Stand: der Commit wird leer
+        resolve(&r, "a.txt", "1\nM\n3\n").unwrap();
+        let res = sequencer(&r, "--continue");
+        let s = status(&r).unwrap();
+        assert_eq!(s.state, RepoState::Clean, "{res:?}");
+        assert!(res.is_ok(), "{res:?}");
+        assert_eq!(s.branch.as_deref(), Some("f"));
+        assert!(Path::new(&r).join("b.txt").exists());
+    }
+
+    #[test]
+    fn m_rebase_konflikt_mehrfach() {
+        let (_t, r, _) = konflikt_setup("rebase2");
+        checkout(&r, "f", false, None).unwrap();
+        ci(&r, "a.txt", "1\nF2\n3\n", "f2");
+        rebase_onto(&r, "main").unwrap();
+        resolve(&r, "a.txt", "1\nMF\n3\n").unwrap();
+        // Naechster Commit konfliktet erneut: kein Fehler, weiter im Rebase
+        sequencer(&r, "--continue").unwrap();
+        assert_eq!(status(&r).unwrap().state, RepoState::Rebase);
+        assert!(has_conflicts(&r));
+        resolve(&r, "a.txt", "1\nMF2\n3\n").unwrap();
+        sequencer(&r, "--continue").unwrap();
+        let s = status(&r).unwrap();
+        assert_eq!((s.state, s.branch.as_deref()), (RepoState::Clean, Some("f")));
+        let l = log(&r, Some("f"), 0, 10).unwrap();
+        let subj: Vec<_> = l.iter().map(|c| c.subject.as_str()).collect();
+        assert_eq!(subj, ["f2", "f", "m", "start"]);
+    }
+
+    #[test]
+    fn m_cherry_pick_und_revert() {
+        let (_t, r, f) = konflikt_setup("pick");
+        pick(&r, "cherry-pick", &f).unwrap();
+        assert_eq!(status(&r).unwrap().state, RepoState::CherryPick);
+        sequencer(&r, "--abort").unwrap();
+        assert_eq!(status(&r).unwrap().state, RepoState::Clean);
+        pick(&r, "cherry-pick", &f).unwrap();
+        resolve(&r, "a.txt", "1\nF\n3\n").unwrap();
+        sequencer(&r, "--continue").unwrap();
+        let l = log(&r, Some("main"), 0, 1).unwrap();
+        assert_eq!((l[0].subject.as_str(), status(&r).unwrap().state), ("f", RepoState::Clean));
+        // Schon enthalten: leerer Pick; Zustand darf nicht haengen bleiben
+        let res = pick(&r, "cherry-pick", &f);
+        if status(&r).unwrap().state == RepoState::CherryPick {
+            sequencer(&r, "--continue").unwrap();
+        }
+        assert_eq!(status(&r).unwrap().state, RepoState::Clean, "{res:?}");
+
+        // Revert mit Konflikt: "m" zuruecknehmen kollidiert mit "f"
+        let m = log(&r, Some("main"), 0, 3).unwrap()[1].sha.clone();
+        pick(&r, "revert", &m).unwrap();
+        assert_eq!(status(&r).unwrap().state, RepoState::Revert);
+        sequencer(&r, "--abort").unwrap();
+        assert_eq!(status(&r).unwrap().state, RepoState::Clean);
+        pick(&r, "revert", &m).unwrap();
+        resolve(&r, "a.txt", "1\n2\n3\n").unwrap();
+        sequencer(&r, "--continue").unwrap();
+        assert_eq!(status(&r).unwrap().state, RepoState::Clean);
+        assert!(log(&r, Some("main"), 0, 1).unwrap()[0].subject.starts_with("Revert"));
+        // Merge-Commit reverten/picken (gegen ersten Parent)
+        checkout(&r, "g", true, Some("f")).unwrap();
+        ci(&r, "g.txt", "g\n", "g");
+        checkout(&r, "main", false, None).unwrap();
+        merge(&r, "g", true).unwrap();
+        let mc = log(&r, Some("main"), 0, 1).unwrap()[0].sha.clone();
+        pick(&r, "revert", &mc).unwrap();
+        assert!(!Path::new(&r).join("g.txt").exists());
+        pick(&r, "cherry-pick", &mc).unwrap();
+        assert!(Path::new(&r).join("g.txt").exists());
+    }
+
+    #[test]
+    fn m_stash() {
+        let (_t, r) = fresh("stash");
+        ci(&r, "a.txt", "1\n", "start");
+        put(&r, "a.txt", "2\n");
+        put(&r, "neu/ü datei.txt", "neu\n");
+        stash_push(&r, Some("mit: doppelpunkt"), true).unwrap();
+        let s = stashes(&r).unwrap();
+        assert_eq!((s[0].branch.as_str(), s[0].message.as_str()), ("main", "mit: doppelpunkt"));
+        let sh = stash_show(&r, 0).unwrap();
+        assert!(sh.contains("neu/ü datei.txt") && sh.contains("+2"), "{sh}");
+        assert!(status(&r).unwrap().files.is_empty());
+        // ohne untracked: neue Datei bleibt liegen
+        put(&r, "a.txt", "3\n");
+        put(&r, "lose.txt", "l\n");
+        stash_push(&r, None, false).unwrap();
+        assert!(Path::new(&r).join("lose.txt").exists());
+        let s = stashes(&r).unwrap();
+        assert_eq!((s.len(), s[0].branch.as_str(), s[1].index), (2, "main", 1));
+        assert!(stash_show(&r, 0).unwrap().contains("+3"));
+        // Pop mit Konflikt: kein Fehler, Stash bleibt
+        ci(&r, "a.txt", "4\n", "vier");
+        tolerate(&r, git(&r).args(["stash", "pop", &stash_ref(0)])).unwrap();
+        assert!(has_conflicts(&r));
+        assert_eq!(stashes(&r).unwrap().len(), 2);
+        resolve(&r, "a.txt", "4\n").unwrap();
+        out(git(&r).args(["stash", "drop", &stash_ref(0)])).unwrap();
+        // Untracked-Stash auf Datei, die inzwischen existiert (ohne Konflikt): Fehler
+        ci(&r, "a.txt", "2\n", "wie stash");
+        put(&r, "neu/ü datei.txt", "anders\n");
+        assert!(tolerate(&r, git(&r).args(["stash", "apply", &stash_ref(0)])).is_err());
+        std::fs::remove_file(Path::new(&r).join("neu/ü datei.txt")).unwrap();
+        discard(&r, &v(&["lose.txt"])).unwrap();
+        out(git(&r).args(["reset", "-q", "--hard"])).unwrap();
+        tolerate(&r, git(&r).args(["stash", "apply", &stash_ref(0)])).unwrap();
+        assert!(Path::new(&r).join("neu/ü datei.txt").exists());
+        // Stash im detached HEAD
+        let head = status(&r).unwrap().head;
+        out(git(&r).args(["stash", "push", "-q", "-u"])).unwrap();
+        checkout(&r, &head, false, None).unwrap();
+        put(&r, "a.txt", "det\n");
+        stash_push(&r, Some("losgeloest"), false).unwrap();
+        assert_eq!(stashes(&r).unwrap()[0].message, "losgeloest");
+    }
+
+    #[test]
+    fn m_tags() {
+        let (_t, r) = fresh("tags");
+        let c1 = ci(&r, "a.txt", "1\n", "eins");
+        let c2 = ci(&r, "a.txt", "2\n", "zwei");
+        tag_create(&r, "v1.0", &c1, Some("Erste: Version")).unwrap();
+        tag_create(&r, "leicht/ü", "HEAD", None).unwrap();
+        tag_create(&r, "leer-nachricht", "HEAD", Some("   ")).unwrap();
+        assert!(tag_create(&r, "v1.0", "HEAD", None).is_err());
+        assert!(tag_create(&r, "bad name", "HEAD", None).is_err());
+        assert!(tag_create(&r, "x", "gibtsnicht", None).is_err());
+        let t = tags(&r).unwrap();
+        let get = |n: &str| t.iter().find(|t| t.name == n).unwrap();
+        assert_eq!((get("v1.0").sha.as_str(), get("v1.0").message.as_str()), (c1.as_str(), "Erste: Version"));
+        assert_eq!((get("leicht/ü").sha.as_str(), get("leicht/ü").message.as_str()), (c2.as_str(), ""));
+        let l = log(&r, None, 0, 10).unwrap();
+        assert!(l.iter().find(|c| c.sha == c1).unwrap().refs.iter().any(|x| x == "tag: v1.0"));
+        checkout(&r, "v1.0", false, None).unwrap();
+        let s = status(&r).unwrap();
+        assert_eq!((s.branch.as_deref(), s.head.as_str()), (None, c1.as_str()));
+        checkout(&r, "main", false, None).unwrap();
+        out(git(&r).args(["tag", "-d", "leicht/ü"])).unwrap();
+        assert_eq!(tags(&r).unwrap().len(), 2);
+        // Tag und Branch gleichen Namens: checkout nimmt den Branch
+        tag_create(&r, "gleich", &c1, None).unwrap();
+        checkout(&r, "gleich", true, None).unwrap();
+        ci(&r, "a.txt", "3\n", "drei");
+        checkout(&r, "main", false, None).unwrap();
+        checkout(&r, "gleich", false, None).unwrap();
+        assert_eq!(status(&r).unwrap().branch.as_deref(), Some("gleich"));
+    }
+
+    #[test]
+    fn m_remote_push_fetch_pull() {
+        let (_t, r) = fresh("remote");
+        let (_bt, b) = bare(&r);
+        ci(&r, "a.txt", "1\n2\n3\n", "start");
+        push(&r, false).unwrap();
+        checkout(&r, "team/x/y", true, None).unwrap();
+        push(&r, false).unwrap();
+        checkout(&r, "main", false, None).unwrap();
+        let (_t2, r2) = clone(&b, "remote-klon");
+        assert!(branches(&r2).unwrap().iter().any(|b| b.name == "origin/team/x/y" && b.remote));
+        // Klon pusht, erster ist behind
+        ci(&r2, "a.txt", "1\nZWEI\n3\n", "vom klon");
+        push(&r2, false).unwrap();
+        talk(git(&r).args(["fetch", "--all", "--prune"])).unwrap();
+        let s = status(&r).unwrap();
+        assert_eq!((s.ahead, s.behind), (0, 1));
+        let bm = branches(&r).unwrap();
+        let m = bm.iter().find(|b| b.name == "main").unwrap();
+        assert_eq!((m.ahead, m.behind), (0, 1));
+        // Divergenz + Konflikt beim Pull (merge)
+        ci(&r, "a.txt", "1\nEINS\n3\n", "lokal");
+        let p = tolerate(&r, git(&r).args(["pull", "--no-rebase"]));
+        assert!(p.is_ok(), "{p:?}");
+        assert_eq!(status(&r).unwrap().state, RepoState::Merge);
+        sequencer(&r, "--abort").unwrap();
+        // Pull mit Rebase und Konflikt
+        let p = tolerate(&r, git(&r).args(["pull", "--rebase"]));
+        assert!(p.is_ok(), "{p:?}");
+        assert_eq!(status(&r).unwrap().state, RepoState::Rebase);
+        resolve(&r, "a.txt", "1\nBEIDE\n3\n").unwrap();
+        sequencer(&r, "--continue").unwrap();
+        let s = status(&r).unwrap();
+        assert_eq!((s.state, s.ahead, s.behind), (RepoState::Clean, 1, 0));
+        push(&r, false).unwrap();
+        // Abgelehnter Push ist Fehler; force-with-lease klappt nach fetch
+        ci(&r2, "c.txt", "c\n", "klon2");
+        assert!(push(&r2, false).is_err());
+        talk(git(&r2).args(["fetch", "--all", "--prune"])).unwrap();
+        push(&r2, true).unwrap();
+        // Remote-Branch mit Slashes loeschen
+        branch_delete(&r2, "origin/team/x/y", false, true).unwrap();
+        talk(git(&r).args(["fetch", "--all", "--prune"])).unwrap();
+        assert!(!branches(&r).unwrap().iter().any(|b| b.name == "origin/team/x/y"));
+        assert!(branch_delete(&r, "team/x/y", false, false).is_ok());
+    }
+
+    #[test]
+    fn m_base_und_unmerged() {
+        let (_t, r) = fresh("base");
+        let _b = bare(&r);
+        ci(&r, "a.txt", "1\n", "start");
+        push(&r, false).unwrap();
+        checkout(&r, "f", true, None).unwrap();
+        ci(&r, "f.txt", "f\n", "f1");
+        ci(&r, "f.txt", "ff\n", "f2");
+        checkout(&r, "main", false, None).unwrap();
+        let um = |r: &str, n: &str| {
+            branches(r).unwrap().into_iter().find(|b| b.name == n).map(|b| (b.unmerged, b.base))
+        };
+        assert_eq!(um(&r, "f"), Some((Some(2), Some("origin/main".into()))));
+        assert_eq!(um(&r, "origin/main"), Some((Some(0), Some("origin/main".into()))));
+        set_base(&r, Some("f")).unwrap();
+        assert_eq!(configured_base(&r).as_deref(), Some("f"));
+        assert_eq!(um(&r, "main"), Some((Some(0), Some("f".into()))));
+        assert!(set_base(&r, Some("gibtsnicht")).is_err());
+        assert!(set_base(&r, Some("-x")).is_err());
+        // Eingestellter Branch geloescht -> automatisch
+        checkout(&r, "g", true, None).unwrap();
+        out(git(&r).args(["branch", "-D", "f"])).unwrap();
+        assert_eq!(um(&r, "g").unwrap().1.as_deref(), Some("origin/main"));
+        set_base(&r, None).unwrap();
+        set_base(&r, None).unwrap();
+        assert_eq!(configured_base(&r), None);
+        out(git(&r).args(["remote", "set-head", "origin", "main"])).unwrap();
+        assert_eq!(base_branch(&r).as_deref(), Some("origin/main"));
+        out(git(&r).args(["remote", "remove", "origin"])).unwrap();
+        assert_eq!(base_branch(&r).as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn m_base_origin_head_verwaist() {
+        // Remote hat master -> main umbenannt; origin/HEAD zeigt nach fetch --prune ins Leere.
+        let (_t, r) = fresh("verwaist");
+        let _b = bare(&r);
+        ci(&r, "a.txt", "1\n", "start");
+        out(git(&r).args(["push", "-q", "origin", "main:master", "main:main"])).unwrap();
+        out(git(&r).args(["fetch", "-q"])).unwrap();
+        out(git(&r).args(["remote", "set-head", "origin", "master"])).unwrap();
+        out(git(&r).args(["push", "-q", "origin", "--delete", "master"])).unwrap();
+        talk(git(&r).args(["fetch", "--all", "--prune"])).unwrap();
+        checkout(&r, "f", true, None).unwrap();
+        ci(&r, "f.txt", "f\n", "f1");
+        let f = branches(&r).unwrap().into_iter().find(|b| b.name == "f").unwrap();
+        assert_eq!(f.unmerged, Some(1), "base={:?}", base_branch(&r));
+    }
+
+    #[test]
+    fn m_nesting_ketten_und_duplikate() {
+        let (_t, r) = fresh("nest");
+        ci(&r, "a.txt", "1\n", "start");
+        checkout(&r, "a", true, None).unwrap();
+        ci(&r, "a.txt", "a\n", "a");
+        checkout(&r, "b", true, None).unwrap();
+        ci(&r, "a.txt", "b\n", "b");
+        checkout(&r, "c", true, None).unwrap();
+        ci(&r, "a.txt", "c\n", "c");
+        checkout(&r, "c-kopie", true, None).unwrap();
+        checkout(&r, "main", false, None).unwrap();
+        checkout(&r, "frei", true, None).unwrap();
+        ci(&r, "z.txt", "z\n", "frei");
+        let n = nesting(&r, &v(&["a", "b", "c", "frei", "a"])).unwrap();
+        let mut a = n.get("a").cloned().unwrap_or_default();
+        a.sort();
+        assert_eq!(a, ["b", "c"]);
+        assert_eq!(n.get("b").cloned().unwrap_or_default(), ["c"]);
+        assert!(!n.contains_key("c") && !n.contains_key("frei"));
+        // Gleicher Stand: gegenseitig enthalten (Frontend filtert o.sha !== b.sha)
+        let n = nesting(&r, &v(&["b", "c", "c-kopie"])).unwrap();
+        let mut b = n.get("b").cloned().unwrap_or_default();
+        b.sort();
+        assert_eq!(b, ["c", "c-kopie"]);
+        assert!(nesting(&r, &v(&["a"])).unwrap().is_empty());
+        assert!(nesting(&r, &v(&["-x", "a"])).is_err());
+    }
+
+    #[test]
+    fn m_nesting_mit_remote() {
+        let (_t, r) = fresh("nestremote");
+        let _b = bare(&r);
+        ci(&r, "a.txt", "1\n", "start");
+        push(&r, false).unwrap();
+        checkout(&r, "team/a", true, None).unwrap();
+        ci(&r, "a.txt", "2\n", "a");
+        push(&r, false).unwrap();
+        checkout(&r, "team/b", true, None).unwrap();
+        ci(&r, "a.txt", "3\n", "b");
+        let n = nesting(&r, &v(&["origin/team/a", "team/b"])).unwrap();
+        assert_eq!(n.get("origin/team/a").cloned().unwrap_or_default(), ["team/b"]);
+    }
+
+    #[test]
+    fn m_nesting_branch_wie_ordner() {
+        let (_t, r) = fresh("nestdir");
+        ci(&r, "docs/readme.md", "1\n", "start");
+        checkout(&r, "docs", true, None).unwrap();
+        ci(&r, "docs/readme.md", "2\n", "docs");
+        checkout(&r, "docs2", true, None).unwrap();
+        ci(&r, "docs/readme.md", "3\n", "docs2");
+        let n = nesting(&r, &v(&["docs", "docs2"]));
+        assert!(n.is_ok(), "{n:?}");
+        assert_eq!(n.unwrap().get("docs").cloned().unwrap_or_default(), ["docs2"]);
+    }
+
+    #[test]
+    fn m_reset_und_ungueltige_eingaben() {
+        let (_t, r) = fresh("reset");
+        let c1 = ci(&r, "a.txt", "1\n", "eins");
+        ci(&r, "a.txt", "2\n", "zwei");
+        // wie git_reset
+        let reset = |mode: &str, sha: &str| talk(git(&r).args(["reset", "-q", mode, arg(sha)?, "--"]));
+        reset("--soft", &c1).unwrap();
+        assert_eq!(file(&status(&r).unwrap(), "a.txt").unwrap().index, "M");
+        reset("--mixed", &c1).unwrap();
+        assert_eq!(file(&status(&r).unwrap(), "a.txt").unwrap().worktree, "M");
+        reset("--hard", &c1).unwrap();
+        assert!(status(&r).unwrap().files.is_empty());
+        assert!(reset("--hard", "--all").is_err());
+        assert!(log(&r, Some("--all"), 0, 1).is_err());
+        assert!(show(&r, "-p").is_err());
+        assert!(merge(&r, "--abort", false).is_err());
+        assert!(pick(&r, "cherry-pick", "-n").is_err());
+        assert!(conflict(&r, "../x").is_err());
+        assert!(resolve(&r, "a.txt", "x").is_err());
+        assert!(sequencer(&r, "--continue").is_err());
+        assert!(diff(&r, Some("gibtsnicht.txt"), false).unwrap().is_empty());
+        // Pathspec-Magie wird nicht ausgewertet
+        put(&r, "b.txt", "b\n");
+        assert!(stage(&r, &v(&[":/"])).is_err());
+        assert!(file(&status(&r).unwrap(), "b.txt").unwrap().index == "?");
+    }
+
+    #[test]
+    fn m_amend_und_commit_nachricht() {
+        let (_t, r) = fresh("amend");
+        ci(&r, "a.txt", "1\n", "eins");
+        let c = commit(&r, "# kein Kommentar\n\nBody mit # Raute", true).unwrap();
+        let d = show(&r, &c).unwrap();
+        assert_eq!(d.commit.subject, "# kein Kommentar");
+        assert_eq!(d.body, "Body mit # Raute");
+        assert!(commit(&r, "   \n", true).is_err());
+        assert_eq!(log(&r, None, 0, 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn m_stash_untracked_teilweise() {
+        let (_t, r) = fresh("stashteil");
+        ci(&r, "a.txt", "1\n", "start");
+        put(&r, "a.txt", "2\n");
+        put(&r, "neu.txt", "aus dem stash\n");
+        stash_push(&r, None, true).unwrap();
+        ci(&r, "a.txt", "3\n", "konkurriert");
+        put(&r, "neu.txt", "anders\n");
+        // wie git_stash_apply(pop=true)
+        let res = tolerate(&r, git(&r).args(["stash", "pop", &stash_ref(0)]));
+        // Tracked-Teil kam mit Konflikt, neu.txt aus dem Stash fehlt: das ist kein Erfolg.
+        assert!(res.is_err(), "{res:?}");
+    }
+
+    #[test]
+    fn m_hunk_und_zeilen_apply() {
+        let (_t, r) = fresh("hunks");
+        let base: String = (1..=20).map(|i| format!("z{i}\n")).collect();
+        ci(&r, "a.txt", &base, "start");
+        let neu = base.replace("z2\n", "z2\nNEU-A\nNEU-B\n").replace("z18\n", "z18\nNEU-C\n");
+        put(&r, "a.txt", &neu);
+        let p = diff(&r, Some("a.txt"), false).unwrap();
+        let hunks: Vec<&str> = p.split("\n@@").collect();
+        assert_eq!(hunks.len(), 3, "{p}");
+        // Nur den zweiten Hunk stagen
+        let second = format!("{}\n@@{}", hunks[0], hunks[2]);
+        apply(&r, &second, true, false).unwrap();
+        let staged = diff(&r, Some("a.txt"), true).unwrap();
+        assert!(staged.contains("+NEU-C") && !staged.contains("NEU-A"), "{staged}");
+        // Einzelne Zeile aus dem ersten Hunk: NEU-B weglassen, Zaehler bleiben falsch (--recount)
+        let first = format!("{}\n@@{}\n", hunks[0], hunks[1]).replace("+NEU-B\n", "");
+        apply(&r, &first, true, false).unwrap();
+        let staged = diff(&r, Some("a.txt"), true).unwrap();
+        assert!(staged.contains("+NEU-A") && !staged.contains("NEU-B"), "{staged}");
+        // Zeile aus dem Index zurueck (reverse cached) und Hunk in der Arbeitskopie verwerfen
+        let s = diff(&r, Some("a.txt"), true).unwrap();
+        let sh: Vec<&str> = s.split("\n@@").collect();
+        apply(&r, &format!("{}\n@@{}", sh[0], sh[2]), true, true).unwrap();
+        assert!(!diff(&r, Some("a.txt"), true).unwrap().contains("NEU-C"));
+        let w = diff(&r, Some("a.txt"), false).unwrap();
+        apply(&r, &w, false, true).unwrap();
+        let now = std::fs::read_to_string(Path::new(&r).join("a.txt")).unwrap();
+        assert!(now.contains("NEU-A") && !now.contains("NEU-B") && !now.contains("NEU-C"), "{now}");
+        // Veralteter Patch (Datei inzwischen geaendert) wird abgelehnt statt falsch angewandt
+        put(&r, "a.txt", base.replace("z3\n", "ANDERS\n"));
+        assert!(apply(&r, &first, false, true).is_err());
+        // Nicht-UTF-8-Datei: sprechende Meldung
+        put(&r, "latin.txt", b"gr\xfc\xdfe\n".as_slice());
+        stage(&r, &v(&["latin.txt"])).unwrap();
+        commit(&r, "latin", false).unwrap();
+        put(&r, "latin.txt", b"gr\xfc\xdfe\nneu\n".as_slice());
+        let p = diff(&r, Some("latin.txt"), false).unwrap();
+        let e = apply(&r, &p.replace("+neu\n", "+neu\n+neu2\n"), true, false);
+        assert!(e.is_ok() || e.unwrap_err().contains("UTF-8"));
+    }
+
+    #[test]
+    fn m_discard_varianten() {
+        let (_t, r) = fresh("discard");
+        ci(&r, "a.txt", "1\n", "start");
+        // Gestaged neu + Arbeitskopie geaendert: nur Arbeitskopie zurueck
+        put(&r, "n.txt", "idx\n");
+        stage(&r, &v(&["n.txt"])).unwrap();
+        put(&r, "n.txt", "wt\n");
+        discard(&r, &v(&["n.txt"])).unwrap();
+        assert_eq!(std::fs::read_to_string(Path::new(&r).join("n.txt")).unwrap(), "idx\n");
+        // Geloescht in der Arbeitskopie
+        std::fs::remove_file(Path::new(&r).join("a.txt")).unwrap();
+        discard(&r, &v(&["a.txt"])).unwrap();
+        assert!(Path::new(&r).join("a.txt").exists());
+        // Untracked in tiefem Ordner + tracked gemischt
+        put(&r, "x/y/z.txt", "z\n");
+        put(&r, "a.txt", "2\n");
+        discard(&r, &v(&["x/y/z.txt", "a.txt"])).unwrap();
+        assert!(!Path::new(&r).join("x/y/z.txt").exists());
+        assert_eq!(std::fs::read_to_string(Path::new(&r).join("a.txt")).unwrap(), "1\n");
+        // Ignorierte Dateien bleiben unangetastet
+        put(&r, ".gitignore", "*.log\n");
+        put(&r, "b.log", "log\n");
+        discard(&r, &v(&["b.log"])).unwrap_or(());
+        assert!(Path::new(&r).join("b.log").exists());
     }
 }

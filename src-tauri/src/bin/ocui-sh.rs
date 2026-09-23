@@ -16,7 +16,19 @@ use reedline::{
 const BUILTINS: [&str; 6] = ["cd", "exit", "clear", "pwd", "history", "export"];
 
 fn main() {
-    let no_claude = std::env::args().any(|a| a == "--no-claude");
+    // Interner Helfer fuer Shell::capture: cwd und Variablen nach einem Lauf in der echten Shell.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|a| a == "--dump") {
+        let mut out = cwd().display().to_string();
+        for n in &args[2..] {
+            if let Some(v) = std::env::var_os(n) {
+                out += &format!("\0{n}={}", v.to_string_lossy());
+            }
+        }
+        print!("{out}");
+        return;
+    }
+    let no_claude = args.iter().any(|a| a == "--no-claude");
     // Ctrl+C gehoert dem Kind: Handler (nicht vererbt) haelt nur die Shell am Leben.
     let _ = ctrlc::set_handler(|| {});
     // Geerbtes "Ctrl+C ignorieren" (z. B. vom GUI-Parent) loeschen, wie cmd.exe es tut;
@@ -146,7 +158,12 @@ impl Shell {
             return true;
         }
         if is_complex(line) {
-            self.status = self.delegate(line);
+            self.status = match state_names(line) {
+                Some(names) if one_command(line) && (cfg!(not(windows)) || self.bash.is_some()) => {
+                    self.capture(line, &names)
+                }
+                _ => self.delegate(line),
+            };
             return true;
         }
         let mut words = split(line, &home().to_string_lossy());
@@ -241,6 +258,33 @@ impl Shell {
         }
     }
 
+    /// cd/export/Zuweisung mit $VAR, Quotes oder Glob: die echte Shell expandiert und fuehrt aus,
+    /// danach meldet `ocui-sh --dump` (nativ, also mit Windows-PATH) cwd und Variablen zurueck.
+    fn capture(&mut self, line: &str, names: &[String]) -> i32 {
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ocui-sh"));
+        let script = format!("set -a\n{line} && exec \"$0\" --dump {}", names.join(" "));
+        let out = match self.real_shell(&script).arg(exe).stderr(std::process::Stdio::inherit()).output() {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("ocui-sh: Shell nicht startbar: {e}");
+                return 126;
+            }
+        };
+        let code = exit_code(out.status);
+        if code != 0 {
+            return code;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut parts = text.split('\0');
+        for (k, v) in parts.clone().skip(1).filter_map(|p| p.split_once('=')) {
+            std::env::set_var(k, v);
+        }
+        match parts.next().map(PathBuf::from) {
+            Some(dir) if !dir.as_os_str().is_empty() && dir != cwd() => self.cd(dir.to_str()),
+            _ => 0,
+        }
+    }
+
     fn delegate(&self, line: &str) -> i32 {
         let mut cmd = self.real_shell(line);
         match cmd.status() {
@@ -259,7 +303,7 @@ impl Shell {
         match &self.bash {
             Some(b) => {
                 let mut c = Command::new(b);
-                c.arg("-c").arg(line);
+                c.arg("-c").arg(self.with_status(line));
                 c
             }
             None => {
@@ -273,8 +317,13 @@ impl Shell {
     #[cfg(not(windows))]
     fn real_shell(&self, line: &str) -> Command {
         let mut c = Command::new("sh");
-        c.arg("-c").arg(line);
+        c.arg("-c").arg(self.with_status(line));
         c
+    }
+
+    /// Frische Shell kennt $? nicht: letzten Status per Funktion (ohne Fork) vorbelegen.
+    fn with_status(&self, line: &str) -> String {
+        format!("__ocui_s() {{ return {}; }}; __ocui_s\n{line}", self.status & 0xff)
     }
 }
 
@@ -306,9 +355,46 @@ fn cwd() -> PathBuf {
 }
 
 /// Zeile besteht nur aus NAME=wert (einer oder mehrere, simpel): dann direkt setzen statt delegieren.
+fn is_name(n: &str) -> bool {
+    !n.is_empty() && n.chars().enumerate().all(|(i, c)| c == '_' || (i == 0 && c.is_ascii_alphabetic()) || (i > 0 && c.is_ascii_alphanumeric()))
+}
+
+/// Zustand, den eine komplexe Zeile in ocui-sh aendern will: cd (nur cwd), export/Zuweisungen
+/// (deren Namen). None = normaler Befehl, geht wie gehabt an die Subshell.
+// ponytail: Werte mit Leerzeichen ausserhalb von Quotes (FOO=$(echo a b)) fallen durch; dann Subshell wie frueher.
+fn state_names(line: &str) -> Option<Vec<String>> {
+    let words = split(line, "~");
+    let names = |ws: &[String]| -> Option<Vec<String>> {
+        ws.iter().map(|w| Some(w.split('=').next().filter(|n| is_name(n))?.to_string())).collect()
+    };
+    match words.first()?.as_str() {
+        "cd" => Some(Vec::new()),
+        "export" if words.len() > 1 => names(&words[1..]),
+        w if w.contains('=') && words.iter().all(|w| w.contains('=')) => names(&words),
+        _ => None,
+    }
+}
+
+/// Genau ein Befehl: keine Pipes, Listen oder Umleitungen ausserhalb von Quotes, $(...) und ${...}.
+fn one_command(line: &str) -> bool {
+    let (mut q, mut depth, mut prev) = (None, 0u32, ' ');
+    for c in line.chars() {
+        match (q, c) {
+            (Some(e), c) if c == e => q = None,
+            (Some(_), _) => {}
+            (None, '\'' | '"' | '`') => q = Some(c),
+            (None, '(' | '{') if prev == '$' || depth > 0 => depth += 1,
+            (None, ')' | '}') if depth > 0 => depth -= 1,
+            (None, '|' | '&' | ';' | '<' | '>' | '(' | ')' | '{' | '}') if depth == 0 => return false,
+            _ => {}
+        }
+        prev = c;
+    }
+    q.is_none() && depth == 0
+}
+
 fn as_assignments(line: &str) -> Option<Vec<(&str, &str)>> {
     let words: Vec<&str> = line.split_whitespace().collect();
-    let is_name = |n: &str| !n.is_empty() && n.chars().enumerate().all(|(i, c)| c == '_' || (i == 0 && c.is_ascii_alphabetic()) || (i > 0 && c.is_ascii_alphanumeric()));
     let mut out = Vec::with_capacity(words.len());
     for w in &words {
         let (k, v) = w.split_once('=')?;
@@ -587,6 +673,23 @@ mod tests {
     }
 
     #[test]
+    fn zustand_aus_komplexen_zeilen() {
+        let n = |l| state_names(l);
+        assert_eq!(n("cd $HOME/x"), Some(vec![]));
+        assert_eq!(n("export PATH=$PATH:/x FOO"), Some(vec!["PATH".into(), "FOO".into()]));
+        assert_eq!(n("FOO=\"a b\" BAR=$X"), Some(vec!["FOO".into(), "BAR".into()]));
+        assert_eq!(n("FOO=1 cmd"), None);
+        assert_eq!(n("export -p"), None);
+        assert_eq!(n("echo $X"), None);
+        for l in ["cd $(git rev-parse --show-toplevel)", "cd ${HOME}", "FOO=\"a|b\"", "cd src*"] {
+            assert!(one_command(l), "{l}");
+        }
+        for l in ["cd $X && make", "cd $X; ls", "export A=$B > f", "cd $(pwd) | cat", "FOO=(a b)"] {
+            assert!(!one_command(l), "{l}");
+        }
+    }
+
+    #[test]
     fn quotes() {
         assert_eq!(split(r#"git commit -m "hallo welt" 'a b' """#, "/h"), ["git", "commit", "-m", "hallo welt", "a b", ""]);
         assert_eq!(split("cd ~/x ~ a~ '~'", "/h"), ["cd", "/h/x", "/h", "a~", "~"]);
@@ -618,5 +721,78 @@ mod tests {
         std::fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
         assert_eq!(branch(&sub).as_deref(), Some("main"));
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ctrl_c_wird_130() {
+        use std::os::windows::process::ExitStatusExt;
+        assert_eq!(exit_code(std::process::ExitStatus::from_raw(0xC000_013A)), 130);
+        assert_eq!(exit_code(std::process::ExitStatus::from_raw(3)), 3);
+    }
+
+    /// Gebautes ocui-sh (cargo build --bin ocui-sh) per stdin-Pipe fahren; fehlt es, None.
+    fn pipe(script: &str, dir: &Path) -> Option<(String, i32)> {
+        let exe = std::env::current_exe().ok()?.parent()?.parent()?.join(format!("ocui-sh{}", std::env::consts::EXE_SUFFIX));
+        if !exe.is_file() {
+            return None;
+        }
+        let mut child = Command::new(exe)
+            .arg("--no-claude")
+            .current_dir(dir)
+            .env("OCUI_T", dir.join("sub"))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .ok()?;
+        child.stdin.take()?.write_all(script.as_bytes()).ok()?;
+        let out = child.wait_with_output().ok()?;
+        Some((String::from_utf8_lossy(&out.stdout).into_owned(), out.status.code().unwrap_or(-1)))
+    }
+
+    fn pipe_dir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("ocui-sh-pipe-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("sub")).unwrap();
+        d
+    }
+
+    #[test]
+    fn pipe_builtins_und_exitcodes() {
+        let d = pipe_dir("ok");
+        let Some((out, code)) = pipe("cd sub\npwd\ncd -\necho hi | tr a-z A-Z\nX=1\necho \"[$X]\"\nfalse\nexit\n", &d) else { return };
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(lines[0].ends_with("sub"), "{out}");
+        assert_eq!(&lines[2..], ["HI", "[1]"], "{out}");
+        assert_eq!(code, 1); // exit ohne Argument: letzter Status
+        assert_eq!(pipe("exit 7\necho nie\n", &d).unwrap(), (String::new(), 7));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn pipe_cd_mit_variable() {
+        let d = pipe_dir("cd");
+        let Some((out, _)) = pipe("cd $OCUI_T\npwd\ncd ..\ncd su*\npwd\ncd $OCUI_T/fehlt\necho $?\n", &d) else { return };
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(lines[0].ends_with("sub") && lines[1].ends_with("sub"), "{out}");
+        assert_eq!(lines[2], "1", "{out}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn pipe_zuweisung_mit_quotes_und_variable() {
+        let d = pipe_dir("assign");
+        let Some((out, _)) = pipe("FOO=\"a b\"\necho \"[$FOO]\"\nexport BAR=$OCUI_T\necho \"[$BAR]\"\n", &d) else { return };
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "[a b]", "{out}");
+        assert_ne!(lines[1], "[]", "{out}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn pipe_letzter_status_in_dollar_fragezeichen() {
+        let d = pipe_dir("status");
+        let Some((out, _)) = pipe("false\necho $?\n", &d) else { return };
+        assert_eq!(out.trim(), "1", "{out}");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

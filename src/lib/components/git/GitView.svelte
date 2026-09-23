@@ -44,14 +44,19 @@
     const before = `${status?.head}|${status?.branch}`;
     try {
       status = await git.status(repo);
+      // Nach Abbrechen/Fortsetzen (auch extern) steht die Datei nicht mehr im Konflikt: Editor zu, sonst zeigt er Altes.
+      if (conflictPath && !status.files.some((f) => f.conflict && f.path === conflictPath)) conflictPath = null;
     } catch (e) {
       error = `Status: ${e}`;
     }
     if (force || before !== `${status?.head}|${status?.branch}`) refreshKey++;
   }
 
-  /** Fuer den Aktualisieren-Knopf in der Titelleiste. */
-  export const reload = () => refresh();
+  /** Fuer den Aktualisieren-Knopf in der Titelleiste und F5; alte Meldungen gelten dann nicht mehr. */
+  export const reload = () => {
+    error = note = "";
+    return refresh();
+  };
 
   let mergeDirty = $state(false);
   /** Offener Merge-Editor mit Entscheidungen: erst nachfragen. */
@@ -127,7 +132,7 @@
     else if (ctrl && e.shiftKey && k === "f") doFetch();
     else if (ctrl && e.shiftKey && k === "p") push();
     else if (ctrl && e.shiftKey && k === "l") pull();
-    else if (e.key === "F5") refresh();
+    else if (e.key === "F5") reload();
     else return;
     e.preventDefault();
   }
@@ -227,7 +232,7 @@
 
   {#if status}
     <div class="flex min-h-0 flex-1">
-      <div class="border-border shrink-0 border-r" style="width:{side}px">
+      <div class="border-border shrink-0 border-r" style="width:{side}px; max-width:40%">
         <Sidebar
           {repo}
           {status}

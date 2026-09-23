@@ -163,7 +163,12 @@ export function linesPatch(file: DiffFile, hunk: Hunk, selected: Set<number>, re
     if (l.kind === "meta") continue; // wird mit der Zeile davor behandelt
     if (l.kind === "ctx" || on) {
       out.push(l);
-      if (meta) out.push(meta);
+      // Ohne Newline nur, wenn auf der neuen Seite nichts mehr folgt. Rueckwaerts moeglich: gewaehltes
+      // "-x" ohne Newline wird gespiegelt zu "+x", danach bleibt ein nicht gewaehltes "+y" als Kontext.
+      const newAfter = src.some(
+        (x, j) => j > i && (x.kind === "ctx" || (x.kind === "del" && !selected.has(j)) || (x.kind === "add" && selected.has(j))),
+      );
+      if (meta && !(l.kind === "add" && newAfter)) out.push(meta);
       if (l.kind !== "ctx") changes++;
       continue;
     }

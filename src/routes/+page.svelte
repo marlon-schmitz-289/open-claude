@@ -33,7 +33,7 @@
   import GitView from "$lib/components/git/GitView.svelte";
   import CloneDialog from "$lib/components/git/CloneDialog.svelte";
   import AccountsDialog from "$lib/components/git/AccountsDialog.svelte";
-  import type { Account } from "$lib/git";
+  import { git, type Account } from "$lib/git";
   import DownloadIcon from "@lucide/svelte/icons/download";
   import UsersIcon from "@lucide/svelte/icons/users";
 
@@ -81,7 +81,6 @@
   // ponytail: keine Tabs-UI, eine Session pro Projekt; Tab-Leiste wenn mehrere parallel sichtbar sein sollen.
   let sessions = $state<{ id: string; repo: Repo }[]>([]);
   let active = $state<string | null>(null);
-  let seq = 0;
   const activeSession = $derived(sessions.find((s) => s.id === active));
   const running = $derived(new Set(sessions.map((s) => s.repo.path)));
   // Git-Ansicht ueberdeckt Liste und Terminal; Terminals laufen darunter weiter.
@@ -203,15 +202,23 @@
     await rescan();
   });
 
+  // Nur der zuletzt gestartete Scan zaehlt, sonst ueberschreibt ein alter Ordner den neuen.
+  let scanGen = 0;
+
   async function rescan() {
+    const g = ++scanGen;
+    const r = root;
     scanning = true;
     error = "";
     try {
-      repos = await invoke<Repo[]>("scan", { root });
+      const found = await invoke<Repo[]>("scan", { root: r });
+      if (g !== scanGen) return;
+      repos = found;
       scannedAt = Date.now();
       fromCache = false;
-      await store.set("cache", { root, repos, at: scannedAt } satisfies Cache);
+      await store.set("cache", { root: r, repos, at: scannedAt } satisfies Cache);
     } catch (e) {
+      if (g !== scanGen) return;
       repos = [];
       error = String(e);
     }
@@ -242,10 +249,23 @@
   /** Offene Session des Projekts zeigen, sonst eine neue starten. */
   function launch(repo?: Repo) {
     if (!repo) return;
+    if (gitRepo && gitView && !gitView.canLeave()) return;
+    leaveGit();
     let s = sessions.find((s) => s.repo.path === repo.path);
-    if (!s) sessions.push((s = { id: `t${++seq}`, repo }));
-    gitRepo = null;
+    // Eindeutig pro Seitenladung: nach einem Neuladen laufen alte PTYs evtl. noch unter "t1"
+    if (!s) sessions.push((s = { id: crypto.randomUUID(), repo }));
     active = s.id;
+  }
+
+  /** Git-Ansicht schliessen; der Branch kann sich dort geaendert haben, Liste und Titel nachziehen. */
+  function leaveGit() {
+    const r = gitRepo;
+    gitRepo = null;
+    if (r)
+      git.status(r.path).then(
+        (st) => (r.branch = st.branch ?? st.head.slice(0, 7)),
+        () => {},
+      );
   }
 
   /** Git-Ansicht fuer das Projekt; ein laufendes Terminal bleibt im Hintergrund. */
@@ -262,6 +282,8 @@
     const hit = repos.find((r) => norm(r.path) === norm(path));
     if (hit) {
       query = "";
+      // Der Suchwechsel waehlt per afterTick (Microtasks) den ersten Eintrag, daher danach setzen.
+      await new Promise((r) => setTimeout(r));
       selected = hit.path;
     }
   }
@@ -278,9 +300,14 @@
   async function back() {
     if (gitRepo && gitView && !gitView.canLeave()) return;
     active = null;
-    gitRepo = null;
+    leaveGit();
     await tick();
     input?.focus();
+  }
+
+  /** Per Klick beenden: claude arbeitet evtl. noch, daher nachfragen. */
+  function endSession(id: string) {
+    if (window.confirm("Sitzung beenden? Ein laufender claude-Prozess wird abgebrochen.")) closeSession(id);
   }
 
   /** Aus der Liste nehmen; der Terminal-Unmount schliesst die PTY. */
@@ -296,8 +323,12 @@
   let overlayOnEsc = false;
   const noteCtrl = (e: KeyboardEvent | PointerEvent) => {
     withCtrl = e.ctrlKey || e.metaKey;
-    if (e instanceof KeyboardEvent && e.key === "Escape")
+    if (!(e instanceof KeyboardEvent)) return;
+    if (e.key === "Escape")
       overlayOnEsc = !!document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]');
+    // WebView2 wuerde neu laden: Sitzungen verwaisen. Im Terminal gehoert Strg+R/F5 der Shell (xterm verhindert selbst).
+    const reload = e.key === "F5" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r");
+    if (reload && !(e.target instanceof Element && e.target.closest(".xterm"))) e.preventDefault();
   };
 
   function onKey(e: KeyboardEvent) {
@@ -324,10 +355,16 @@
       }
       return;
     }
-    // Offene Dialoge (Klonen, Konten) bekommen ihre Tasten selbst.
-    if (cloneOpen || accountsOpen || setup) return;
-
+    // Esc hat schon ein Dialog oder Menue geschlossen, nicht auch noch das Fenster.
+    if (e.key === "Escape" && (overlayOnEsc || e.defaultPrevented)) return;
     const ctrl = e.ctrlKey || e.metaKey;
+    if (e.key === "F1" || (ctrl && e.key === "/")) {
+      if (!cloneOpen && !accountsOpen && !setup) help = !help;
+      e.preventDefault();
+      return;
+    }
+    // Offene Dialoge (Hilfe, Klonen, Konten) bekommen ihre Tasten selbst.
+    if (help || cloneOpen || accountsOpen || setup) return;
 
     if (ctrl && e.key >= "1" && e.key <= "9") {
       launch(flat[Number(e.key) - 1]?.repo);
@@ -345,9 +382,7 @@
       openGit(current?.repo);
     } else if (ctrl && e.key.toLowerCase() === "n") {
       cloneOpen = true;
-    } else if (e.key === "F1" || (ctrl && e.key === "/")) {
-      help = !help;
-    } else if (e.key === "Escape" && !help) {
+    } else if (e.key === "Escape") {
       if (query) query = "";
       else getCurrentWindow().close();
     } else {
@@ -437,7 +472,7 @@
         variant="ghost"
         size="sm"
         class="text-muted-foreground mr-1 h-6 text-[11px]"
-        onclick={() => closeSession(activeSession.id)}>Sitzung beenden</Button
+        onclick={() => endSession(activeSession.id)}>Sitzung beenden</Button
       >
     {/if}
   {:else}
@@ -451,15 +486,17 @@
       Open Claude
     </span>
   {/if}
-  <!-- Fensterknoepfe wie bei Windows: nicht per Tab erreichbar, kein Fokusrahmen. -->
+  <!-- Fensterknoepfe wie bei Windows: nicht per Tab erreichbar, kein Fokusrahmen, Fokus bleibt im Terminal/der Suche. -->
   <button
     tabindex="-1"
+    onmousedown={(e) => e.preventDefault()}
     class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 place-items-center outline-none"
     onclick={() => getCurrentWindow().minimize()}
     aria-label="Minimieren"><MinusIcon class="size-3.5" /></button
   >
   <button
     tabindex="-1"
+    onmousedown={(e) => e.preventDefault()}
     class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 place-items-center outline-none"
     onclick={() => getCurrentWindow().toggleMaximize()}
     aria-label={maximized ? "Wiederherstellen" : "Maximieren"}
@@ -476,6 +513,7 @@
   </button>
   <button
     tabindex="-1"
+    onmousedown={(e) => e.preventDefault()}
     class="text-muted-foreground grid h-9 w-11 place-items-center outline-none hover:bg-[#b4404a] hover:text-white"
     onclick={() => getCurrentWindow().close()}
     aria-label="Schließen"><XIcon class="size-3.5" /></button
@@ -616,7 +654,7 @@
                       onclick={(e) => {
                         e.stopPropagation();
                         const s = sessions.find((s) => s.repo.path === item.repo.path);
-                        if (s) closeSession(s.id);
+                        if (s) endSession(s.id);
                       }}
                       aria-label="Sitzung beenden"
                       title="Sitzung beenden"><XIcon class="size-3" /></button
@@ -756,13 +794,14 @@
         ["Strg + E", "Ordner im Explorer öffnen"],
         ["Strg + R", "Neu einlesen"],
         ["Strg + O", "Dev-Ordner wechseln"],
-        ["Esc", "Suche leeren, sonst schließen"],
+        ["Esc", "Suche leeren, sonst schließen (bzw. ins Tray)"],
       ])}
       <div class="grid content-start gap-6">
         {@render keys("Terminal und Git", [
           ["⇧ + Esc / Strg + ⇧ + W", "Zurück zur Liste, Sitzung läuft weiter"],
           ["Alt + E", "Ordner im Explorer öffnen"],
           ["Alt + G", "Im Terminal: Git-Ansicht öffnen"],
+          ["Strg + ⇧ + C / Strg + V", "Im Terminal: kopieren / einfügen"],
         ])}
         {@render keys("Git-Ansicht", [
           ["Esc", "Zurück zur Liste"],

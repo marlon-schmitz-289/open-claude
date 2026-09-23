@@ -38,6 +38,8 @@
   let query = $state("");
   let own = $state<RemoteRepo[]>([]);
   let page = $state(1);
+  const PER_PAGE = 50; // wie forge.rs
+  let ownDone = $state(false); // letzte Seite war nicht voll: kein "Mehr laden"
   let searched = $state<RemoteRepo[] | null>(null); // null = noch keine Fernsuche
   let loading = $state(false);
   let error = $state("");
@@ -46,7 +48,7 @@
   let url = $state("");
   let protocol = $state<"https" | "ssh">("https");
   let dest = $state("");
-  let destTouched = false; // sobald der Nutzer den Zielordner selbst aendert, nicht mehr automatisch mitfuehren
+  let destTouched = $state(false); // sobald der Nutzer den Zielordner selbst aendert, nicht mehr automatisch mitfuehren
 
   let cloneId = $state("");
   let progress = $state<CloneProgress | null>(null);
@@ -82,21 +84,27 @@
     searched = null;
     query = "";
     page = 1;
+    ownDone = false;
     error = "";
-    await loadOwn();
+    await loadOwn(1);
   }
 
-  async function loadOwn() {
-    if (!account) return;
+  async function loadOwn(pg: number) {
+    const a = account;
+    if (!a) return;
     loading = true;
     error = "";
     try {
-      const more = await forge.repos(account.kind, account.host, "", page);
-      own = page === 1 ? more : [...own, ...more];
+      const more = await forge.repos(a.kind, a.host, "", pg);
+      if (account !== a) return; // inzwischen anderes Konto gewaehlt
+      own = pg === 1 ? more : [...own, ...more];
+      page = pg;
+      ownDone = more.length < PER_PAGE;
     } catch (e) {
-      error = String(e);
+      if (account === a) error = String(e);
+    } finally {
+      if (account === a) loading = false;
     }
-    loading = false;
   }
 
   async function searchRemote() {
@@ -154,6 +162,7 @@
       reset();
     } catch (e) {
       error = String(e);
+      progress = null; // die letzte Zeile steht sonst doppelt da
     } finally {
       unlisten();
       cloning = false;
@@ -221,6 +230,7 @@
             placeholder="Eigene Repos filtern…"
             class="pl-7 text-xs"
             onkeydown={(e) => e.key === "Enter" && searchRemote()}
+            oninput={() => (searched = null)}
           />
         </div>
         <Button variant="outline" size="sm" class="text-xs" disabled={!query.trim() || loading} onclick={searchRemote}
@@ -264,13 +274,10 @@
               {/if}
             </button>
           {/each}
-          {#if !searched && own.length && !loading}
+          {#if !searched && own.length && !loading && !ownDone}
             <button
               class="text-muted-foreground hover:text-foreground w-full py-1.5 text-center text-[11px]"
-              onclick={() => {
-                page += 1;
-                loadOwn();
-              }}>Mehr laden…</button
+              onclick={() => loadOwn(page + 1)}>Mehr laden…</button
             >
           {/if}
         {/if}
@@ -313,7 +320,7 @@
         <div class="truncate font-mono text-[11px]">{progress.line}</div>
       </div>
     {/if}
-    {#if error}<p class="text-destructive text-xs">{error}</p>{/if}
+    {#if error}<p class="text-destructive text-xs whitespace-pre-wrap">{error}</p>{/if}
 
     <div class="flex justify-end gap-1.5">
       <Button variant="outline" size="sm" class="text-xs" onclick={() => (open = false)} disabled={cloning}>Abbrechen</Button>

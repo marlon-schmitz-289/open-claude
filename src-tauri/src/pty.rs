@@ -207,7 +207,7 @@ pub fn pty_open(
         let Some(ptys) = app.try_state::<Ptys>() else { return };
         let mut map = ptys.lock();
         // Nach pty_close (oder bei neuer Session gleicher id) kein Exit melden.
-        if !map.get(&id).is_some_and(|s| s.gen == gen) {
+        if map.get(&id).is_none_or(|s| s.gen != gen) {
             return;
         }
         let s = map.remove(&id);

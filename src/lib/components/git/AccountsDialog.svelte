@@ -96,19 +96,19 @@
         {#each accounts as a (a.kind + a.host + a.user)}
           <li class="flex items-center gap-2 px-2.5 py-1.5">
             <GlobeIcon class="size-3.5 shrink-0" />
-            <span class="min-w-0 flex-1 truncate">
+            <span class="min-w-0 flex-1 truncate" title="{a.user}@{a.host}">
               <span class="font-medium">{a.user}</span>
               <span class="text-muted-foreground font-mono text-[11px]">@{a.host}</span>
-              <Badge variant="outline" class="text-muted-foreground ml-1 text-[10px]"
-                >{a.kind === "github" ? "GitHub" : "GitLab"}</Badge
-              >
             </span>
+            <Badge variant="outline" class="text-muted-foreground shrink-0 text-[10px]"
+              >{a.kind === "github" ? "GitHub" : "GitLab"}</Badge
+            >
             <Button
               variant="ghost"
               size="icon"
               class="text-muted-foreground hover:text-destructive size-6"
               disabled={busy}
-              onclick={() => logout(a)}
+              onclick={() => window.confirm(`Konto ${a.user}@${a.host} entfernen? Der Token wird gelöscht.`) && logout(a)}
               aria-label="Konto entfernen"
             >
               <TrashIcon class="size-3.5" />

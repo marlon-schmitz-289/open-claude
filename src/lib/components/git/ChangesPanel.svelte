@@ -52,18 +52,34 @@
       .catch((e) => (error = String(e)));
   });
 
+  // busy sperrt den Commit, solange eine Aktion laeuft (sonst zwei Commits per doppeltem Strg+Enter).
+  let busy = $state(false);
   async function run(action: () => Promise<unknown>) {
     error = "";
+    busy = true;
     try {
       await action();
       onchange();
     } catch (e) {
       error = String(e);
+    } finally {
+      busy = false;
     }
   }
 
   const toggle = (f: FileChange, isStaged: boolean) =>
     run(() => (isStaged ? git.unstage(repo, [f.path]) : git.stage(repo, [f.path])));
+
+  // Nach Stagen per Leertaste: Fokus auf die Datei, die jetzt an derselben Stelle der Liste steht.
+  let refocus: { staged: boolean; index: number } | null = null;
+  $effect(() => {
+    status;
+    if (!refocus) return;
+    const { staged: s, index } = refocus;
+    refocus = null;
+    const here = document.querySelectorAll<HTMLElement>(`[data-file-list="${s}"]`);
+    (here[Math.min(index, here.length - 1)] ?? document.querySelector<HTMLElement>("[data-file-list]"))?.focus();
+  });
 
   // Bestaetigung fuer Verwerfen.
   let confirm = $state<{ title: string; message: string; run: () => Promise<unknown> } | null>(null);
@@ -132,13 +148,21 @@
   let message = $state("");
   let amend = $state(false);
   const subjectLen = $derived(message.split("\n")[0].length);
-  const canCommit = $derived(message.trim() !== "" && (amend || staged.length > 0));
+  const canCommit = $derived(!busy && message.trim() !== "" && (amend || staged.length > 0));
+  // Fuer Amend geladene Nachricht; beim Abwaehlen wieder weg, sofern unveraendert.
+  let amendMsg = "";
 
   async function toggleAmend() {
-    if (!amend || message.trim()) return;
+    if (!amend) {
+      if (message === amendMsg) message = "";
+      amendMsg = "";
+      return;
+    }
+    if (message.trim()) return;
     try {
       const d = await git.show(repo, "HEAD");
-      message = d.body.trim() ? `${d.commit.subject}\n\n${d.body.trim()}` : d.commit.subject;
+      if (!amend || message.trim()) return;
+      message = amendMsg = d.body.trim() ? `${d.commit.subject}\n\n${d.body.trim()}` : d.commit.subject;
     } catch (e) {
       error = String(e);
     }
@@ -148,7 +172,7 @@
     if (!canCommit) return;
     run(async () => {
       await git.commit(repo, message, amend);
-      message = "";
+      message = amendMsg = "";
       amend = false;
     });
   }
@@ -203,11 +227,13 @@
                 ? 'bg-accent'
                 : ''}"
               title={f.orig ? `${f.orig} → ${f.path}` : f.path}
+              data-file-list={isStaged}
               onclick={() => (sel = { path: f.path, staged: isStaged })}
               ondblclick={() => toggle(f, isStaged)}
               onkeydown={(e) => {
                 if (e.key === " ") {
                   e.preventDefault();
+                  refocus = { staged: isStaged, index: files.indexOf(f) };
                   toggle(f, isStaged);
                 }
               }}
@@ -245,7 +271,8 @@
     >
   {/if}
   <div class="flex min-h-0 flex-1">
-    <div class="border-border flex w-80 shrink-0 flex-col border-r">
+    <!-- Schrumpft mit, damit auch im kleinen Fenster Platz fuer den Diff bleibt -->
+    <div class="border-border flex w-2/5 max-w-80 min-w-48 shrink-0 flex-col border-r">
       {#if conflicts.length}
         <div class="border-border max-h-40 overflow-y-auto border-b">
           <div class="bg-destructive/15 text-destructive flex items-center gap-1.5 px-2 py-1 font-semibold">

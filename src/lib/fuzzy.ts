@@ -7,17 +7,21 @@ export type Match = { score: number; hits: number[] };
 
 const BOUNDARY = /[\\/\-_. ]/;
 
+/** Ein Zeichen fuer den Vergleich: klein und ohne Akzente ("Ü" -> "u", "İ" -> "i"). */
+export const fold = (c: string) => c.normalize("NFD").replace(/\p{M}/gu, "").normalize("NFC").toLowerCase();
+
 export function fuzzy(text: string, query: string): Match | null {
   if (!query) return { score: 0, hits: [] };
 
-  const hay = text.toLowerCase();
-  const needle = query.toLowerCase();
+  // Zeichenweise, damit hits zum Originaltext passen (toLowerCase() macht aus "İ" zwei Zeichen)
+  const hay = text.split("").map(fold);
+  const needle = query.split("").map(fold);
   const hits: number[] = [];
   let score = 0;
   let at = 0;
 
   for (const ch of needle) {
-    if (ch === " ") continue;
+    if (ch === " " || !ch) continue; // Leerzeichen und einzelne Akzentzeichen
     const found = hay.indexOf(ch, at);
     if (found < 0) return null;
 
