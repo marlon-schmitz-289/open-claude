@@ -5,6 +5,7 @@
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
+  import ClaudeLoader from "./ClaudeLoader.svelte";
 
   let {
     id,
@@ -21,6 +22,8 @@
   let unlisten: Promise<UnlistenFn>[] = [];
   // Unmount vor pty_open-Antwort: sonst bliebe eine PTY ohne UI zurueck.
   let dead = false;
+  // claude braucht ~2 s bis zur ersten Ausgabe; solange laufen die Clawds.
+  let booting = $state(true);
 
   function refit() {
     // Versteckt liefert der Container 0x0 und wuerde die PTY auf 0 Spalten setzen.
@@ -36,6 +39,8 @@
     if (e.type !== "keydown") return true;
     // Alt+E oeffnet den Explorer, das macht der App-Handler.
     if (e.altKey && !e.ctrlKey && e.key.toLowerCase() === "e") return false;
+    // Umschalt+Esc fuehrt zur Liste zurueck; einfaches Esc bleibt bei claude (abbrechen, zurueckspringen).
+    if (e.shiftKey && e.key === "Escape") return false;
     if (!e.ctrlKey) return true;
     const key = e.key.toLowerCase();
     // false = xterm ignoriert das Event, es blubbert zum App-Handler am window.
@@ -103,6 +108,17 @@
     t.open(el);
     fit.fit();
     t.attachCustomKeyEventHandler(onKeyEvent);
+    // ConPTY schickt vorab nur Steuersequenzen; erst sichtbarer Text heisst, claude ist da.
+    const ready = t.onWriteParsed(() => {
+      const b = t.buffer.active;
+      for (let y = 0; y < b.length; y++) {
+        if (b.getLine(y)?.translateToString(true).trim()) {
+          booting = false;
+          ready.dispose();
+          return;
+        }
+      }
+    });
     t.onData((data) => invoke("pty_write", { id, data }).catch(() => {}));
     t.focus();
 
@@ -143,7 +159,10 @@
     class="h-full overflow-hidden rounded-xl px-3 py-2.5 shadow-lg ring-1 shadow-black/30 ring-white/5 transition-shadow duration-300 focus-within:ring-primary/40 focus-within:shadow-primary/10"
     style="background: radial-gradient(ellipse at top right, color-mix(in oklch, var(--primary) 8%, transparent), transparent 60%), var(--card);"
   >
-    <div bind:this={el} class="h-full"></div>
+    <div class="relative h-full">
+      <div bind:this={el} class="h-full"></div>
+      {#if booting}<ClaudeLoader />{/if}
+    </div>
   </div>
 </div>
 

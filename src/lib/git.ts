@@ -1,0 +1,199 @@
+// Vertrag zwischen Frontend und src-tauri/src/git.rs + forge.rs.
+// Namen und Felder hier sind verbindlich; Rust serialisiert exakt diese Formen (snake_case-Felder).
+import { invoke } from "@tauri-apps/api/core";
+
+/** Eine Datei aus `git status --porcelain=v2`. index/worktree = XY-Zeichen ("." = unveraendert, "?" = untracked). */
+export type FileChange = {
+  path: string;
+  /** Alter Pfad bei Umbenennung. */
+  orig: string | null;
+  index: string;
+  worktree: string;
+  conflict: boolean;
+};
+
+export type RepoState = "clean" | "merge" | "rebase" | "cherry-pick" | "revert";
+
+export type Status = {
+  /** null bei detached HEAD. */
+  branch: string | null;
+  head: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  state: RepoState;
+  files: FileChange[];
+};
+
+export type Commit = {
+  sha: string;
+  parents: string[];
+  author: string;
+  email: string;
+  /** ISO 8601 (Author-Datum). */
+  date: string;
+  subject: string;
+  /** Dekorationen wie "HEAD -> main", "origin/main", "tag: v1". */
+  refs: string[];
+};
+
+export type CommitDetail = { commit: Commit; body: string; diff: string };
+
+export type Branch = {
+  /** Lokal "feature/x", remote "origin/feature/x". */
+  name: string;
+  remote: boolean;
+  current: boolean;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  sha: string;
+  date: string;
+  subject: string;
+  /** Commits, die noch nicht in `base` (origin/HEAD bzw. main/master) sind; null ohne Basis oder bei git < 2.41. */
+  unmerged: number | null;
+  base: string | null;
+};
+
+export type Stash = { index: number; message: string; date: string; branch: string };
+export type Tag = { name: string; sha: string; date: string; message: string };
+export type Remote = { name: string; url: string };
+
+/** Drei Staende einer Konfliktdatei plus die Arbeitsdatei mit Markern. */
+export type Conflict = {
+  path: string;
+  base: string | null;
+  ours: string | null;
+  theirs: string | null;
+  merged: string;
+};
+
+export type ResetMode = "soft" | "mixed" | "hard";
+
+const call = <T>(cmd: string, args: Record<string, unknown>) => invoke<T>(cmd, args);
+
+export const git = {
+  status: (repo: string) => call<Status>("git_status", { repo }),
+  /** rev null = alle Refs (--all). */
+  log: (repo: string, rev: string | null, skip: number, limit: number) =>
+    call<Commit[]>("git_log", { repo, rev, skip, limit }),
+  show: (repo: string, sha: string) => call<CommitDetail>("git_show", { repo, sha }),
+  /** Unified Diff. path null = alles. Untracked Dateien kommen als neue Datei. */
+  diff: (repo: string, path: string | null, staged: boolean) =>
+    call<string>("git_diff", { repo, path, staged }),
+  stage: (repo: string, paths: string[]) => call<void>("git_stage", { repo, paths }),
+  unstage: (repo: string, paths: string[]) => call<void>("git_unstage", { repo, paths }),
+  /** Aenderungen verwerfen; untracked Dateien werden geloescht. */
+  discard: (repo: string, paths: string[]) => call<void>("git_discard", { repo, paths }),
+  /** Patch anwenden (Hunk stagen: cached; unstagen: cached+reverse; verwerfen: reverse). */
+  apply: (repo: string, patch: string, cached: boolean, reverse: boolean) =>
+    call<void>("git_apply", { repo, patch, cached, reverse }),
+  /** Liefert die neue SHA. */
+  commit: (repo: string, message: string, amend: boolean) =>
+    call<string>("git_commit", { repo, message, amend }),
+
+  branches: (repo: string) => call<Branch[]>("git_branches", { repo }),
+  /** create = neuer Branch `target` ab `start` (null = HEAD). Remote-Branch auschecken legt Tracking-Branch an. */
+  checkout: (repo: string, target: string, create: boolean, start: string | null) =>
+    call<string>("git_checkout", { repo, target, create, start }),
+  branchDelete: (repo: string, name: string, force: boolean, remote: boolean) =>
+    call<string>("git_branch_delete", { repo, name, force, remote }),
+  branchRename: (repo: string, from: string, to: string) =>
+    call<void>("git_branch_rename", { repo, from, to }),
+  merge: (repo: string, rev: string, noFf: boolean) => call<string>("git_merge", { repo, rev, noFf }),
+  rebase: (repo: string, onto: string) => call<string>("git_rebase", { repo, onto }),
+  /** Laufenden merge/rebase/cherry-pick/revert abbrechen bzw. fortsetzen (je nach Status.state). */
+  abort: (repo: string) => call<string>("git_abort", { repo }),
+  continue: (repo: string) => call<string>("git_continue", { repo }),
+  cherryPick: (repo: string, sha: string) => call<string>("git_cherry_pick", { repo, sha }),
+  revert: (repo: string, sha: string) => call<string>("git_revert", { repo, sha }),
+  reset: (repo: string, sha: string, mode: ResetMode) => call<string>("git_reset", { repo, sha, mode }),
+
+  fetch: (repo: string) => call<string>("git_fetch", { repo }),
+  pull: (repo: string, rebase: boolean) => call<string>("git_pull", { repo, rebase }),
+  /** Ohne Upstream wird automatisch `-u origin <branch>` gesetzt. force = --force-with-lease. */
+  push: (repo: string, force: boolean) => call<string>("git_push", { repo, force }),
+  remotes: (repo: string) => call<Remote[]>("git_remotes", { repo }),
+
+  stashes: (repo: string) => call<Stash[]>("git_stashes", { repo }),
+  stashPush: (repo: string, message: string | null, untracked: boolean) =>
+    call<string>("git_stash_push", { repo, message, untracked }),
+  stashApply: (repo: string, index: number, pop: boolean) =>
+    call<string>("git_stash_apply", { repo, index, pop }),
+  stashDrop: (repo: string, index: number) => call<void>("git_stash_drop", { repo, index }),
+  stashShow: (repo: string, index: number) => call<string>("git_stash_show", { repo, index }),
+
+  tags: (repo: string) => call<Tag[]>("git_tags", { repo }),
+  tagCreate: (repo: string, name: string, sha: string, message: string | null) =>
+    call<void>("git_tag_create", { repo, name, sha, message }),
+  tagDelete: (repo: string, name: string) => call<void>("git_tag_delete", { repo, name }),
+
+  /** Welche der names stecken schon in anderen aus names? Name -> enthaltende Namen (nur enthaltene als Key). */
+  nesting: (repo: string, names: string[]) =>
+    call<Record<string, string[]>>("git_nesting", { repo, names }),
+  /** Fest eingestellter Production-Branch des Repos (git config ocui.base); null = automatisch. */
+  getBase: (repo: string) => call<string | null>("git_get_base", { repo }),
+  setBase: (repo: string, base: string | null) => call<void>("git_set_base", { repo, base }),
+
+  conflict: (repo: string, path: string) => call<Conflict>("git_conflict", { repo, path }),
+  /** Schreibt den aufgeloesten Inhalt und staged die Datei. */
+  resolve: (repo: string, path: string, content: string) =>
+    call<void>("git_resolve", { repo, path, content }),
+};
+
+// ---------- GitHub / GitLab ----------
+
+export type ForgeKind = "github" | "gitlab";
+
+/** Token liegt im Windows-Anmeldeinfo-Speicher, nie im Store. */
+export type Account = { kind: ForgeKind; host: string; user: string; avatar: string | null };
+
+export type RemoteRepo = {
+  kind: ForgeKind;
+  host: string;
+  /** "owner/name" bzw. GitLab "group/sub/name". */
+  full_name: string;
+  name: string;
+  description: string | null;
+  private: boolean;
+  fork: boolean;
+  archived: boolean;
+  stars: number;
+  lang: string | null;
+  updated_at: string;
+  default_branch: string | null;
+  clone_http: string;
+  clone_ssh: string;
+  web_url: string;
+};
+
+export type PullRequest = {
+  number: number;
+  title: string;
+  author: string;
+  source_branch: string;
+  target_branch: string;
+  draft: boolean;
+  updated_at: string;
+  web_url: string;
+};
+
+export type CloneProgress = { line: string; percent: number | null };
+
+export const forge = {
+  /** Prueft den Token gegen die API und legt ihn ab. host z. B. "github.com", "gitlab.firma.de". */
+  login: (kind: ForgeKind, host: string, token: string) =>
+    call<Account>("forge_login", { kind, host, token }),
+  logout: (kind: ForgeKind, host: string) => call<void>("forge_logout", { kind, host }),
+  /** Token aus `gh auth token` (GitHub) bzw. `glab auth token` uebernehmen, falls installiert. */
+  importCli: (kind: ForgeKind, host: string) => call<Account>("forge_import_cli", { kind, host }),
+  /** query leer = eigene Repos (zuletzt aktiv zuerst), sonst Suche. page ab 1. */
+  repos: (kind: ForgeKind, host: string, query: string, page: number) =>
+    call<RemoteRepo[]>("forge_repos", { kind, host, query, page }),
+  /** Offene PRs/MRs zum Remote-URL eines lokalen Repos; leer, wenn kein passendes Konto. */
+  pulls: (remoteUrl: string) => call<PullRequest[]>("forge_pulls", { remoteUrl }),
+  /** Klont nach dest; Fortschritt als Event `clone:{id}` (CloneProgress). Liefert den Zielpfad. */
+  clone: (id: string, url: string, dest: string) => call<string>("forge_clone", { id, url, dest }),
+  /** Oeffnet eine URL im Standardbrowser. */
+  openUrl: (url: string) => call<void>("open_url", { url }),
+};

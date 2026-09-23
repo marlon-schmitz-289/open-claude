@@ -1,6 +1,6 @@
 [package]
 name = "ocui"
-version = "0.1.3"
+version = "0.2.0"
 description = "Projekt-Launcher fuer Claude Code"
 authors = ["Marlon Schmitz"]
 edition = "2021"
@@ -26,6 +26,10 @@ portable-pty = "0.9"
 # nur fuer die eigene Shell (src/bin/ocui-sh.rs)
 reedline = "0.49"
 ctrlc = "3"
+# native-tls = SChannel: nutzt den Windows-Zertifikatsspeicher (Firmen-Root-CA hinter Proxy)
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "query", "native-tls", "charset", "http2", "system-proxy"] }
+base64 = "0.23.1"
+keyring = { version = "3", features = ["windows-native"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

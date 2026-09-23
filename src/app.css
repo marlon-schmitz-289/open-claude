@@ -74,6 +74,47 @@
   ::-webkit-scrollbar {
     width: 10px;
   }
+  /* Native Checkboxen im App-Look statt Windows-Standard. */
+  input[type="checkbox"] {
+    appearance: none;
+    display: inline-grid;
+    place-content: center;
+    flex-shrink: 0;
+    width: 0.875rem;
+    height: 0.875rem;
+    margin: 0;
+    border: 1px solid color-mix(in oklch, var(--muted-foreground) 55%, transparent);
+    border-radius: 3px;
+    background: var(--secondary);
+    cursor: pointer;
+    transition:
+      background-color 0.1s,
+      border-color 0.1s;
+  }
+  input[type="checkbox"]::before {
+    content: "";
+    width: 0.5rem;
+    height: 0.5rem;
+    background: var(--primary-foreground);
+    clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+    transform: scale(0);
+    transition: transform 0.1s;
+  }
+  input[type="checkbox"]:hover {
+    border-color: var(--primary);
+  }
+  input[type="checkbox"]:checked {
+    background: var(--primary);
+    border-color: var(--primary);
+  }
+  input[type="checkbox"]:checked::before {
+    transform: scale(1);
+  }
+  /* Keine Browser-Fokusrahmen: Listen zeigen Auswahl per Hintergrund, Felder per ring (box-shadow). */
+  :focus,
+  :focus-visible {
+    outline: none;
+  }
   ::-webkit-scrollbar-thumb {
     background: var(--border);
     border: 3px solid transparent;

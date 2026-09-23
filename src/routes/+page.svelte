@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { age } from "$lib/utils";
   import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -11,6 +12,7 @@
   import { Badge } from "$lib/components/ui/badge/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Separator } from "$lib/components/ui/separator/index.js";
+  import { Input } from "$lib/components/ui/input/index.js";
   import FolderIcon from "@lucide/svelte/icons/folder";
   import RefreshIcon from "@lucide/svelte/icons/refresh-cw";
   import GitBranchIcon from "@lucide/svelte/icons/git-branch";
@@ -25,6 +27,12 @@
   import { fuzzy } from "$lib/fuzzy";
   import IdleAmongUs from "$lib/components/IdleAmongUs.svelte";
   import Terminal from "$lib/components/Terminal.svelte";
+  import GitView from "$lib/components/git/GitView.svelte";
+  import CloneDialog from "$lib/components/git/CloneDialog.svelte";
+  import AccountsDialog from "$lib/components/git/AccountsDialog.svelte";
+  import type { Account } from "$lib/git";
+  import DownloadIcon from "@lucide/svelte/icons/download";
+  import UsersIcon from "@lucide/svelte/icons/users";
 
   type Repo = {
     path: string;
@@ -52,7 +60,8 @@
   };
   type Cache = { root: string; repos: Repo[]; at: number };
 
-  let store: Store;
+  // raw: die Store-Instanz nicht proxien; null bis onMount geladen hat.
+  let store = $state.raw<Store>(null!);
   let root = $state("");
   let repos = $state<Repo[]>([]);
   let query = $state("");
@@ -72,6 +81,14 @@
   let seq = 0;
   const activeSession = $derived(sessions.find((s) => s.id === active));
   const running = $derived(new Set(sessions.map((s) => s.repo.path)));
+  // Git-Ansicht ueberdeckt Liste und Terminal; Terminals laufen darunter weiter.
+  let gitRepo = $state<Repo | null>(null);
+  let gitView = $state<GitView>();
+  const view = $derived(gitRepo ? "git" : active ? "term" : "list");
+  const viewRepo = $derived(gitRepo ?? activeSession?.repo);
+  let cloneOpen = $state(false);
+  let accountsOpen = $state(false);
+  let accounts = $state<Account[]>([]);
 
   async function toggleAutostart() {
     try {
@@ -145,13 +162,32 @@
   const flat = $derived(groups.flatMap((g) => g.items));
   const current = $derived(flat.find((h) => h.repo.path === selected) ?? flat[0]);
 
+  // Maximiert-Zustand fuers Icon; aendert sich auch per Doppelklick auf die Titelleiste oder Win+Pfeil.
+  let maximized = $state(false);
+  onMount(() => {
+    const win = getCurrentWindow();
+    const sync = async () => (maximized = await win.isMaximized());
+    sync();
+    const off = win.onResized(sync);
+    return () => off.then((f) => f());
+  });
+
   onMount(async () => {
     store = await load("settings.json", { autoSave: true });
-    root = (await store.get<string>("root")) ?? (await invoke<string>("default_root"));
+    const saved = await store.get<string>("root");
+    root = saved ?? (await invoke<string>("default_root"));
     pins = (await store.get<string[]>("pins")) ?? [];
+    accounts = (await store.get<Account[]>("accounts")) ?? [];
     autostart = await isEnabled().catch(() => false);
     tray = (await store.get<boolean>("tray")) ?? true;
     await invoke("set_tray", { on: tray });
+
+    // Erster Start: Dev-Ordner erst bestaetigen lassen, dann einlesen.
+    if (!saved) {
+      setup = true;
+      scanning = false;
+      return;
+    }
 
     // Zuerst den letzten Stand zeigen, dann im Hintergrund frisch einlesen.
     const cached = await store.get<Cache>("cache");
@@ -180,10 +216,21 @@
     input?.focus();
   }
 
+  let setup = $state(false);
+
+  async function finishSetup() {
+    root = root.trim();
+    if (!root) return;
+    await store.set("root", root);
+    setup = false;
+    await rescan();
+  }
+
   async function pickRoot() {
     const picked = await open({ directory: true, defaultPath: root });
     if (typeof picked !== "string") return;
     root = picked;
+    if (setup) return; // im Erststart-Dialog erst mit "Übernehmen" speichern
     await store.set("root", root);
     repos = [];
     await rescan();
@@ -194,7 +241,26 @@
     if (!repo) return;
     let s = sessions.find((s) => s.repo.path === repo.path);
     if (!s) sessions.push((s = { id: `t${++seq}`, repo }));
+    gitRepo = null;
     active = s.id;
+  }
+
+  /** Git-Ansicht fuer das Projekt; ein laufendes Terminal bleibt im Hintergrund. */
+  function openGit(repo?: Repo) {
+    if (!repo) return;
+    active = null;
+    gitRepo = repo;
+  }
+
+  /** Nach dem Klonen neu einlesen und das neue Projekt markieren. */
+  async function cloned(path: string) {
+    await rescan();
+    const norm = (p: string) => p.replace(/\\/g, "/").toLowerCase();
+    const hit = repos.find((r) => norm(r.path) === norm(path));
+    if (hit) {
+      query = "";
+      selected = hit.path;
+    }
   }
 
   async function reveal(repo?: Repo) {
@@ -207,7 +273,9 @@
   }
 
   async function back() {
+    if (gitRepo && gitView && !gitView.canLeave()) return;
     active = null;
+    gitRepo = null;
     await tick();
     input?.focus();
   }
@@ -218,18 +286,43 @@
     if (active === id) back();
   }
 
+  // Klick/Enter oeffnet Git, mit Strg Claude. onSelect der Liste kennt kein Event,
+  // daher Strg in der Capture-Phase merken, bevor die Liste reagiert.
+  let withCtrl = false;
+  // Esc gehoert offenen Dialogen/Menues. Die schliessen schon vor onKey, daher hier vorher nachsehen.
+  let overlayOnEsc = false;
+  const noteCtrl = (e: KeyboardEvent | PointerEvent) => {
+    withCtrl = e.ctrlKey || e.metaKey;
+    if (e instanceof KeyboardEvent && e.key === "Escape")
+      overlayOnEsc = !!document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]');
+  };
+
   function onKey(e: KeyboardEvent) {
-    // Im Terminal gehoeren fast alle Kuerzel der Shell (Readline: Strg+R/K/E/P/O ...).
-    if (active) {
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "w") {
+    // Im Terminal gehoeren fast alle Kuerzel der Shell (Readline: Strg+R/K/E/P/O/G ...).
+    // Die Git-Ansicht hat ihre eigenen Kuerzel in GitView.svelte.
+    if (view !== "list") {
+      const alt = e.altKey && !e.ctrlKey;
+      if ((e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "w") || (e.shiftKey && e.key === "Escape")) {
         e.preventDefault();
         back();
-      } else if (e.altKey && !e.ctrlKey && e.key.toLowerCase() === "e") {
+      } else if (e.key === "Escape" && view === "git") {
+        // Offene Dialoge/Menues schliessen sich selbst, Eingabefelder verlieren nur den Fokus.
+        const el = document.activeElement;
+        if (overlayOnEsc) return;
         e.preventDefault();
-        reveal(activeSession?.repo);
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.blur();
+        else back();
+      } else if (alt && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        reveal(viewRepo);
+      } else if (alt && e.key.toLowerCase() === "g" && view === "term") {
+        e.preventDefault();
+        openGit(activeSession?.repo);
       }
       return;
     }
+    // Offene Dialoge (Klonen, Konten) bekommen ihre Tasten selbst.
+    if (cloneOpen || accountsOpen || setup) return;
 
     const ctrl = e.ctrlKey || e.metaKey;
 
@@ -245,6 +338,10 @@
       reveal(current?.repo);
     } else if (ctrl && e.key.toLowerCase() === "p") {
       if (current) togglePin(current.repo.path);
+    } else if (ctrl && e.key.toLowerCase() === "g") {
+      openGit(current?.repo);
+    } else if (ctrl && e.key.toLowerCase() === "n") {
+      cloneOpen = true;
     } else if (e.key === "F1" || (ctrl && e.key === "/")) {
       help = !help;
     } else if (e.key === "Escape" && !help) {
@@ -256,27 +353,10 @@
     e.preventDefault();
   }
 
-  const STEPS: [number, string][] = [
-    [31536e6, "J"],
-    [2592e6, "Mo"],
-    [864e5, "T"],
-    [36e5, "h"],
-    [6e4, "min"],
-  ];
-
-  function age(iso: string) {
-    if (!iso) return "";
-    const diff = Date.now() - Date.parse(iso);
-    for (const [ms, unit] of STEPS) {
-      if (diff >= ms) return `${Math.round(diff / ms)} ${unit}`;
-    }
-    return "jetzt";
-  }
-
   const short = $derived(root.replace(/^[A-Za-z]:[\\/]Users[\\/][^\\/]+/, "~"));
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKey} onkeydowncapture={noteCtrl} onpointerdowncapture={noteCtrl} />
 
 <IdleAmongUs />
 
@@ -284,7 +364,7 @@
   class="bg-chrome border-border flex h-9 items-center border-b pl-3.5"
   data-tauri-drag-region
 >
-  {#if activeSession}
+  {#if viewRepo}
     <button
       class="text-muted-foreground hover:bg-secondary hover:text-foreground -ml-3.5 mr-1 grid h-9 w-10 place-items-center"
       onclick={back}
@@ -293,21 +373,23 @@
     >
     <div class="flex min-w-0 flex-1 items-center gap-2" data-tauri-drag-region>
       <span class="truncate text-xs font-semibold" data-tauri-drag-region>
-        {split(activeSession.repo.rel)[1]}
+        {split(viewRepo.rel)[1]}
       </span>
-      {#if split(activeSession.repo.rel)[0]}
+      {#if split(viewRepo.rel)[0]}
         <span
           class="text-muted-foreground hidden truncate font-mono text-[11px] sm:block"
           data-tauri-drag-region
         >
-          {split(activeSession.repo.rel)[0]}
+          {split(viewRepo.rel)[0]}
         </span>
       {/if}
-      <Badge variant="outline" class="text-muted-foreground shrink-0 gap-1 font-mono text-[11px]">
-        <GitBranchIcon class="size-3" />
-        {activeSession.repo.branch}
-      </Badge>
-      {#each activeSession.repo.langs ?? [] as lang (lang)}
+      {#if view === "term"}
+        <Badge variant="outline" class="text-muted-foreground shrink-0 gap-1 font-mono text-[11px]">
+          <GitBranchIcon class="size-3" />
+          {viewRepo.branch}
+        </Badge>
+      {/if}
+      {#each viewRepo.langs ?? [] as lang (lang)}
         <Badge variant="outline" class="text-muted-foreground shrink-0 gap-1.5 text-[11px]">
           <span
             class="size-2 rounded-full"
@@ -317,12 +399,21 @@
         </Badge>
       {/each}
     </div>
-    <Button
-      variant="ghost"
-      size="sm"
-      class="text-muted-foreground mr-1 h-6 text-[11px]"
-      onclick={() => closeSession(activeSession.id)}>Sitzung beenden</Button
-    >
+    {#if activeSession}
+      <Button
+        variant="ghost"
+        size="sm"
+        class="text-muted-foreground h-6 gap-1.5 text-[11px]"
+        onclick={() => openGit(activeSession.repo)}
+        title="Git-Ansicht (Alt+G)"><GitBranchIcon class="size-3.5" /> Git</Button
+      >
+      <Button
+        variant="ghost"
+        size="sm"
+        class="text-muted-foreground mr-1 h-6 text-[11px]"
+        onclick={() => closeSession(activeSession.id)}>Sitzung beenden</Button
+      >
+    {/if}
   {:else}
     <img
       src="/logo.png"
@@ -334,18 +425,32 @@
       Open Claude
     </span>
   {/if}
+  <!-- Fensterknoepfe wie bei Windows: nicht per Tab erreichbar, kein Fokusrahmen. -->
   <button
-    class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 place-items-center"
+    tabindex="-1"
+    class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 place-items-center outline-none"
     onclick={() => getCurrentWindow().minimize()}
     aria-label="Minimieren"><MinusIcon class="size-3.5" /></button
   >
   <button
-    class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 place-items-center"
+    tabindex="-1"
+    class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 place-items-center outline-none"
     onclick={() => getCurrentWindow().toggleMaximize()}
-    aria-label="Maximieren"><SquareIcon class="size-3" /></button
+    aria-label={maximized ? "Wiederherstellen" : "Maximieren"}
   >
+    {#if maximized}
+      <!-- Wiederherstellen: vorderes Quadrat unten links, hinteres oben rechts -->
+      <svg class="size-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1">
+        <rect x="0.5" y="2.5" width="9" height="9" rx="1" />
+        <path d="M2.5 2.5V1.5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-1" />
+      </svg>
+    {:else}
+      <SquareIcon class="size-3" />
+    {/if}
+  </button>
   <button
-    class="text-muted-foreground grid h-9 w-11 place-items-center hover:bg-[#b4404a] hover:text-white"
+    tabindex="-1"
+    class="text-muted-foreground grid h-9 w-11 place-items-center outline-none hover:bg-[#b4404a] hover:text-white"
     onclick={() => getCurrentWindow().close()}
     aria-label="Schließen"><XIcon class="size-3.5" /></button
   >
@@ -356,7 +461,7 @@
     shouldFilter={false}
     bind:value={selected}
     loop
-    class="bg-background flex-1 rounded-none! p-0 {active ? 'hidden!' : ''}"
+    class="bg-background flex-1 rounded-none! p-0 {view !== 'list' ? 'hidden!' : ''}"
   >
     <div class="border-border flex items-center gap-2 border-b pr-2">
       <div class="flex-1 [&_[data-slot=command-input-wrapper]]:p-0">
@@ -392,7 +497,7 @@
               {@const nr = flat.indexOf(item) + 1}
               <Command.Item
                 value={item.repo.path}
-                onSelect={() => launch(item.repo)}
+                onSelect={() => (withCtrl ? launch(item.repo) : openGit(item.repo))}
                 class="gap-3 px-3 py-2"
               >
                 {@const pinned = pins.includes(item.repo.path)}
@@ -476,7 +581,7 @@
   </Command.Root>
 
   <!-- Alle Terminals bleiben gemountet, sonst stirbt claude beim Zurueckgehen. -->
-  <div class="min-h-0 flex-1 {active ? '' : 'hidden'}">
+  <div class="min-h-0 flex-1 {view === 'term' ? '' : 'hidden'}">
     {#each sessions as s (s.id)}
       <Terminal
         id={s.id}
@@ -487,8 +592,16 @@
     {/each}
   </div>
 
+  {#if gitRepo}
+    <div class="min-h-0 flex-1">
+      {#key gitRepo.path}
+        <GitView bind:this={gitView} repo={gitRepo.path} onclaude={() => launch(gitRepo!)} />
+      {/key}
+    </div>
+  {/if}
+
   <footer
-    class="bg-chrome border-border text-muted-foreground flex items-center gap-3 border-t px-3.5 py-2 text-[11px] {active
+    class="bg-chrome border-border text-muted-foreground flex items-center gap-3 border-t px-3.5 py-2 text-[11px] {view !== 'list'
       ? 'hidden'
       : ''}"
   >
@@ -502,6 +615,13 @@
         })}{/if}
     </span>
     <span class="flex-1"></span>
+    <Button variant="ghost" size="sm" class="h-6 gap-1.5 text-[11px]" onclick={() => (cloneOpen = true)} title="Repo klonen (Strg+N)">
+      <DownloadIcon class="size-3.5" /> Klonen
+    </Button>
+    <Button variant="ghost" size="sm" class="h-6 gap-1.5 text-[11px]" onclick={() => (accountsOpen = true)} title="GitHub- und GitLab-Konten">
+      <UsersIcon class="size-3.5" /> Konten{#if accounts.length}<span class="tabular-nums">({accounts.length})</span>{/if}
+    </Button>
+    <Separator orientation="vertical" class="h-3.5!" />
     <Button
       variant="ghost"
       size="sm"
@@ -524,7 +644,8 @@
     </Button>
     <Separator orientation="vertical" class="h-3.5!" />
     <span class="flex items-center gap-1.5">
-      <kbd class="border-border rounded border px-1.5 py-0.5 font-mono">⏎</kbd> Claude starten
+      <kbd class="border-border rounded border px-1.5 py-0.5 font-mono">⏎</kbd> Git
+      <kbd class="border-border rounded border px-1.5 py-0.5 font-mono">^⏎</kbd> Claude
     </span>
     <Button variant="ghost" size="sm" class="h-6 gap-1.5 text-[11px]" onclick={() => (help = true)}>
       <KeyboardIcon class="size-3.5" /> F1
@@ -532,19 +653,105 @@
   </footer>
 </div>
 
-<Dialog.Root bind:open={help}>
-  <Dialog.Content class="sm:max-w-sm">
-    <Dialog.Header>
-      <Dialog.Title>Tastenkürzel</Dialog.Title>
-      <Dialog.Description>Alles lässt sich ohne Maus bedienen.</Dialog.Description>
-    </Dialog.Header>
-    <dl class="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2.5 text-sm">
-      {#each [["⏎", "Claude im Projekt starten"], ["↑ ↓", "Projekt wählen"], ["Strg + 1 … 9", "Treffer direkt starten"], ["Strg + K", "Suche fokussieren"], ["Strg + P", "Projekt anpinnen"], ["Strg + E", "Ordner im Explorer öffnen"], ["Strg + R", "Neu einlesen"], ["Strg + O", "Dev-Ordner wechseln"], ["Strg + ⇧ + W", "Terminal verlassen, Sitzung läuft weiter"], ["Alt + E", "Im Terminal: Ordner im Explorer öffnen"], ["Esc", "Suche leeren, sonst schließen"]] as [key, what]}
+{#snippet keys(title: string, list: string[][])}
+  <div>
+    <h3 class="text-muted-foreground mb-2 text-[11px] font-semibold uppercase tracking-wide">{title}</h3>
+    <dl class="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2 text-sm">
+      {#each list as [key, what] (key)}
         <dt class="border-border rounded border px-1.5 py-0.5 text-center font-mono text-[11px]">
           {key}
         </dt>
         <dd class="text-muted-foreground">{what}</dd>
       {/each}
     </dl>
+  </div>
+{/snippet}
+
+<Dialog.Root bind:open={help}>
+  <Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+    <Dialog.Header>
+      <Dialog.Title>Tastenkürzel</Dialog.Title>
+      <Dialog.Description>Alles lässt sich ohne Maus bedienen.</Dialog.Description>
+    </Dialog.Header>
+    <div class="grid gap-6 sm:grid-cols-2">
+      {@render keys("Liste", [
+        ["⏎ / Klick", "Git-Ansicht öffnen"],
+        ["Strg + ⏎ / Strg + Klick", "Claude im Projekt starten"],
+        ["↑ ↓", "Projekt wählen"],
+        ["Strg + 1 … 9", "Claude im Treffer starten"],
+        ["Strg + G", "Git-Ansicht öffnen"],
+        ["Strg + N", "Repo klonen"],
+        ["Strg + K", "Suche fokussieren"],
+        ["Strg + P", "Projekt anpinnen"],
+        ["Strg + E", "Ordner im Explorer öffnen"],
+        ["Strg + R", "Neu einlesen"],
+        ["Strg + O", "Dev-Ordner wechseln"],
+        ["Esc", "Suche leeren, sonst schließen"],
+      ])}
+      <div class="grid content-start gap-6">
+        {@render keys("Terminal und Git", [
+          ["⇧ + Esc / Strg + ⇧ + W", "Zurück zur Liste, Sitzung läuft weiter"],
+          ["Alt + E", "Ordner im Explorer öffnen"],
+          ["Alt + G", "Im Terminal: Git-Ansicht öffnen"],
+        ])}
+        {@render keys("Git-Ansicht", [
+          ["Esc", "Zurück zur Liste"],
+          ["Strg + 1 / 2", "Änderungen / Verlauf"],
+          ["Strg + ⇧ + F", "Fetch"],
+          ["Strg + ⇧ + L", "Pull"],
+          ["Strg + ⇧ + P", "Push"],
+          ["F5", "Aktualisieren"],
+          ["Strg + ⏎", "Commit"],
+          ["Leertaste", "Datei stagen / unstagen"],
+          ["F7 / ⇧ + F7", "Merge-Editor: nächster / vorheriger Konflikt"],
+          ["Strg + S", "Merge-Editor: speichern"],
+        ])}
+      </div>
+    </div>
   </Dialog.Content>
 </Dialog.Root>
+
+<!-- Erster Start: nicht wegklickbar, ohne Ordner gibt es nichts einzulesen. -->
+<Dialog.Root open={setup}>
+  <Dialog.Content
+    class="sm:max-w-md"
+    showCloseButton={false}
+    escapeKeydownBehavior="ignore"
+    interactOutsideBehavior="ignore"
+  >
+    <Dialog.Header>
+      <Dialog.Title>Willkommen bei Open Claude</Dialog.Title>
+      <Dialog.Description>
+        Wo liegen deine Projekte? Alle Git-Repos darunter erscheinen in der Liste. Ändern kannst du das später mit Strg+O.
+      </Dialog.Description>
+    </Dialog.Header>
+    <div class="flex gap-2">
+      <Input
+        bind:value={root}
+        class="font-mono text-xs"
+        onkeydown={(e) => e.key === "Enter" && finishSetup()}
+      />
+      <Button variant="outline" size="icon" onclick={pickRoot} aria-label="Ordner wählen">
+        <FolderIcon class="size-4" />
+      </Button>
+    </div>
+    <div class="flex justify-end">
+      <Button onclick={finishSetup} disabled={!root.trim()}>Übernehmen</Button>
+    </div>
+  </Dialog.Content>
+</Dialog.Root>
+
+{#if store}
+  <AccountsDialog bind:open={accountsOpen} {store} bind:accounts />
+{/if}
+<CloneDialog
+  bind:open={cloneOpen}
+  {accounts}
+  {root}
+  existing={repos.map((r) => r.path)}
+  onclone={cloned}
+  onaccounts={() => {
+    cloneOpen = false;
+    accountsOpen = true;
+  }}
+/>

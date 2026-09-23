@@ -10,6 +10,10 @@ use walkdir::WalkDir;
 
 // Terminal in der App (ersetzt das externe wt.exe-Fenster).
 mod pty;
+// GitHub/GitLab: Konten, Repos, PRs, Klonen.
+mod forge;
+// Git-Client ueber die git-CLI.
+mod git;
 
 #[derive(Serialize)]
 struct Repo {
@@ -284,7 +288,51 @@ pub fn run() {
             pty::pty_open,
             pty::pty_write,
             pty::pty_resize,
-            pty::pty_close
+            pty::pty_close,
+            forge::forge_login,
+            forge::forge_logout,
+            forge::forge_import_cli,
+            forge::forge_repos,
+            forge::forge_pulls,
+            forge::forge_clone,
+            forge::open_url,
+            git::git_status,
+            git::git_log,
+            git::git_show,
+            git::git_diff,
+            git::git_stage,
+            git::git_unstage,
+            git::git_discard,
+            git::git_apply,
+            git::git_commit,
+            git::git_branches,
+            git::git_checkout,
+            git::git_branch_delete,
+            git::git_branch_rename,
+            git::git_merge,
+            git::git_rebase,
+            git::git_abort,
+            git::git_continue,
+            git::git_cherry_pick,
+            git::git_revert,
+            git::git_reset,
+            git::git_fetch,
+            git::git_pull,
+            git::git_push,
+            git::git_remotes,
+            git::git_stashes,
+            git::git_stash_push,
+            git::git_stash_apply,
+            git::git_stash_drop,
+            git::git_stash_show,
+            git::git_tags,
+            git::git_tag_create,
+            git::git_tag_delete,
+            git::git_get_base,
+            git::git_nesting,
+            git::git_set_base,
+            git::git_conflict,
+            git::git_resolve
         ])
         .setup(|app| tray(app.handle()).map_err(Into::into))
         // Mit Tray versteckt Schliessen nur — raus kommt man dann ueber das Tray-Menue.
