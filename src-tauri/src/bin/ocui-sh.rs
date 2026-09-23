@@ -696,6 +696,8 @@ mod tests {
         assert_eq!(split("  a   b  ", "/h"), ["a", "b"]);
     }
 
+    // Windows-Pfade: unter Unix ist \ kein Trenner
+    #[cfg(windows)]
     #[test]
     fn pathext() {
         let files = ["C:\\n\\npm.cmd", "C:\\n\\npm", "C:\\g\\git.exe", "C:\\g\\tool.EXE"];

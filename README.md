@@ -9,6 +9,8 @@ Tauri v2 (Rust) + SvelteKit + shadcn-svelte.
 
 ## Installation
 
+### Windows
+
 Setup aus den [Releases](../../releases) laden und ausführen. Die Anwendung ist nicht signiert,
 Windows fragt daher einmalig nach: *Weitere Informationen → Trotzdem ausführen*.
 
@@ -18,6 +20,30 @@ Voraussetzungen auf dem Rechner:
 - Git for Windows — für die Git-Ansicht, die Zeit des letzten Commits und für Befehle mit Pipes,
   Umleitungen oder Variablen im Terminal (`ocui-sh` reicht sie an die Git-Bash weiter, sonst an `cmd`)
 - Windows 10 1809 oder neuer (ConPTY)
+
+### macOS
+
+`.dmg` (Apple Silicon oder Intel) aus den [Releases](../../releases) laden. Die Anwendung ist
+nicht signiert, macOS blockiert den ersten Start daher: im Finder mit Rechtsklick auf die App
+→ *Öffnen* wählen, oder per Terminal die Quarantäne-Markierung entfernen:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Open Claude.app"
+```
+
+Voraussetzung: `claude` auf dem PATH, sonst öffnet sich das Terminal ohne startende CLI.
+
+### Linux
+
+AppImage oder `.deb` aus den [Releases](../../releases) laden. Das AppImage braucht
+Ausführrechte (`chmod +x`), das `.deb` lässt sich mit `apt install ./open-claude_*.deb`
+einrichten.
+
+Voraussetzungen auf dem Rechner:
+
+- `claude` auf dem PATH — sonst öffnet sich das Terminal ohne startende CLI
+- WebKitGTK (`libwebkit2gtk-4.1-0`) und `libayatana-appindicator3-1` für das Tray-Icon,
+  auf gängigen Distributionen meist schon vorhanden
 
 ## Bedienung
 
@@ -151,3 +177,12 @@ npm run tauri build -- --bundles msi     # MSI für die Softwareverteilung
 Hinter einem Proxy mit eigenem Root-Zertifikat brauchen die Paketmanager einen Hinweis:
 `.cargo/config.toml` setzt dafür `check-revoke = false`, und für die shadcn-Registry hilft
 `NODE_OPTIONS=--use-system-ca`.
+
+## Releases bauen
+
+Windows-, macOS- (Apple Silicon und Intel) und Linux-Builds laufen kostenlos über
+GitHub Actions (`.github/workflows/release.yml`). Ein Tag `vX.Y.Z` pushen löst den Build
+aus und legt einen Entwurf unter [Releases](../../releases) mit allen Installern an; der
+Entwurf muss danach manuell freigegeben werden. Über *Actions → Release → Run workflow*
+lässt sich derselbe Workflow auch ohne Release nur zum Testen der Builds anstoßen, die
+Bundles liegen dann als Artefakte am Workflow-Lauf.

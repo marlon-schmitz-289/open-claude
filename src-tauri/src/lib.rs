@@ -79,7 +79,7 @@ fn read_langs(repo: &Path) -> Vec<String> {
     langs_in(&names)
 }
 
-/// Wie dev.bat: %DEV% wenn gesetzt, sonst %USERPROFILE%\Dev.
+/// Wie dev.bat: %DEV% wenn gesetzt, sonst %USERPROFILE%\Dev bzw. ~/Dev.
 #[tauri::command]
 fn default_root() -> String {
     if let Ok(dev) = std::env::var("DEV") {
@@ -110,6 +110,7 @@ fn read_branch(repo: &Path) -> String {
 
 /// Startet ein Kommando ohne eigenes Konsolenfenster.
 fn quiet(program: &str) -> Command {
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut cmd = Command::new(program);
     #[cfg(windows)]
     {
@@ -210,11 +211,23 @@ fn reveal(path: String) -> Result<(), String> {
     if !dir.is_dir() {
         return Err(format!("Ordner nicht gefunden: {path}"));
     }
-    Command::new("explorer")
-        .arg(&dir)
-        .spawn()
-        .map(|_| ())
+    open_system(&dir)
         .map_err(|e| format!("Explorer konnte nicht geoeffnet werden: {e}"))
+}
+
+/// Oeffnet Ordner oder URL mit dem Standardprogramm (Explorer, Finder, xdg-open).
+pub(crate) fn open_system(target: impl AsRef<std::ffi::OsStr>) -> std::io::Result<()> {
+    let prog = if cfg!(windows) {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    // wait im Thread, sonst bleibt unter Unix ein Zombie-Prozess stehen
+    let mut child = Command::new(prog).arg(target).spawn()?;
+    std::thread::spawn(move || child.wait());
+    Ok(())
 }
 
 /// Holt das Fenster aus dem Tray zurueck. Versteckt reicht nicht als Annahme:

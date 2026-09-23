@@ -59,25 +59,28 @@ fn parent(dir: &str) -> Option<&str> {
         .map(|(p, _)| p)
 }
 
-/// Welche Shell `claude` startet. Zuerst die eigene ocui-sh (`own`, liegt neben der App),
-/// sonst Windows: Git-Bash, pwsh, cmd. Unix: $SHELL.
+/// Fallback ohne $SHELL: Standard-Shell des Systems.
+const UNIX_SHELL: &str = if cfg!(target_os = "macos") { "/bin/zsh" } else { "/bin/bash" };
+
+/// Welche Shell `claude` startet. Unix: $SHELL als Login-Shell. Windows: zuerst die eigene
+/// ocui-sh (`own`, liegt neben der App), sonst Git-Bash, pwsh, cmd.
 fn shell(
     windows: bool,
     own: &str,
     env: impl Fn(&str) -> Option<String>,
     exists: impl Fn(&str) -> bool,
 ) -> (String, Vec<String>) {
-    // ocui-sh startet claude selbst, danach ihre REPL.
-    if exists(own) {
-        return (own.into(), vec![]);
-    }
     if !windows {
         let sh = env("SHELL")
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "/bin/bash".into());
+            .unwrap_or_else(|| UNIX_SHELL.into());
         // Login-Shell fuer PATH; nach claude bleibt dieselbe Shell offen (auch zsh/fish).
         let rest = format!("claude; exec {sh} -li");
         return (sh, vec!["-lic".into(), rest]);
+    }
+    // ocui-sh (fuer Git-Bash gebaut) startet claude selbst, danach ihre REPL.
+    if exists(own) {
+        return (own.into(), vec![]);
     }
 
     let path = env("PATH").unwrap_or_default();
@@ -248,7 +251,7 @@ pub fn pty_close(ptys: State<'_, Ptys>, id: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{shell, valid_id};
+    use super::{shell, valid_id, UNIX_SHELL};
 
     fn run(windows: bool, env: &[(&str, &str)], files: &[&str]) -> (String, Vec<String>) {
         shell(
@@ -271,7 +274,8 @@ mod tests {
     fn eigene_shell_hat_vorrang() {
         let bash = "C:\\Program Files\\Git\\bin\\bash.exe";
         assert_eq!(run(true, WIN_ENV, &[OWN, bash]), (OWN.to_string(), vec![]));
-        assert_eq!(run(false, &[], &[OWN]).0, OWN);
+        // Unix: ocui-sh ist fuer Git-Bash gebaut, direkt die Login-Shell.
+        assert_eq!(run(false, &[("SHELL", "/bin/zsh")], &[OWN]).0, "/bin/zsh");
     }
 
     #[test]
@@ -309,8 +313,8 @@ mod tests {
         let (p, a) = run(false, &[("SHELL", "/bin/zsh")], &[]);
         assert_eq!(p, "/bin/zsh");
         assert_eq!(a, ["-lic", "claude; exec /bin/zsh -li"]);
-        assert_eq!(run(false, &[], &[]).0, "/bin/bash");
-        assert_eq!(run(false, &[("SHELL", " ")], &[]).0, "/bin/bash");
+        assert_eq!(run(false, &[], &[]).0, UNIX_SHELL);
+        assert_eq!(run(false, &[("SHELL", " ")], &[]).0, UNIX_SHELL);
     }
 
     #[test]

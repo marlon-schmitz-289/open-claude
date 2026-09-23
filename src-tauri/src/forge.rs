@@ -465,7 +465,7 @@ fn clone_blocking(url: String, dest: String, emit: impl Fn(CloneProgress)) -> Re
     Ok(dest)
 }
 
-/// Nur http(s): sonst koennte explorer beliebige Programme oder Pfade oeffnen.
+/// Nur http(s): sonst koennte explorer/open/xdg-open beliebige Programme oder Pfade oeffnen.
 fn valid_url(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
     (lower.starts_with("https://") || lower.starts_with("http://"))
@@ -478,10 +478,7 @@ pub fn open_url(url: String) -> Result<(), String> {
     if !valid_url(&url) {
         return Err(format!("Keine http(s)-URL: {url}"));
     }
-    std::process::Command::new("explorer")
-        .arg(&url)
-        .spawn()
-        .map(|_| ())
+    crate::open_system(&url)
         .map_err(|e| format!("Browser konnte nicht geöffnet werden: {e}"))
 }
 
@@ -596,7 +593,8 @@ mod tests {
         std::fs::write(src.join("a.txt"), "x").unwrap();
         git(&src, &["add", "."]);
         git(&src, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"]);
-        let url = format!("file:///{}", src.display().to_string().replace('\\', "/"));
+        // Unix-Pfad beginnt schon mit /
+        let url = format!("file:///{}", src.display().to_string().replace('\\', "/").trim_start_matches('/'));
 
         // Leerer, existierender Ordner ist erlaubt.
         let empty = root.join("leer");
