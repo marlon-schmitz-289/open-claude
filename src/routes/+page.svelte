@@ -11,7 +11,6 @@
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Badge } from "$lib/components/ui/badge/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { Separator } from "$lib/components/ui/separator/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import FolderIcon from "@lucide/svelte/icons/folder";
   import RefreshIcon from "@lucide/svelte/icons/refresh-cw";
@@ -24,6 +23,10 @@
   import SquareIcon from "@lucide/svelte/icons/square";
   import XIcon from "@lucide/svelte/icons/x";
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
+  import SettingsIcon from "@lucide/svelte/icons/settings";
+  import { DropdownMenu } from "bits-ui";
+  import TerminalIcon from "@lucide/svelte/icons/terminal";
+  import FolderOpenIcon from "@lucide/svelte/icons/folder-open";
   import { fuzzy } from "$lib/fuzzy";
   import IdleAmongUs from "$lib/components/IdleAmongUs.svelte";
   import Terminal from "$lib/components/Terminal.svelte";
@@ -399,7 +402,30 @@
         </Badge>
       {/each}
     </div>
-    {#if activeSession}
+    {#if view === "git" && gitRepo}
+      <Button
+        variant="ghost"
+        size="sm"
+        class="text-muted-foreground h-6 gap-1.5 text-[11px]"
+        onclick={() => launch(gitRepo!)}
+        title="Claude im Projekt öffnen"><TerminalIcon class="size-3.5" /> Claude</Button
+      >
+      <Button
+        variant="ghost"
+        size="sm"
+        class="text-muted-foreground h-6 gap-1.5 text-[11px]"
+        onclick={() => reveal(gitRepo!)}
+        title="Ordner im Explorer öffnen (Alt+E)"><FolderOpenIcon class="size-3.5" /> Explorer</Button
+      >
+      <Button
+        variant="ghost"
+        size="sm"
+        class="text-muted-foreground mr-1 h-6 text-[11px]"
+        onclick={() => gitView?.reload()}
+        title="Aktualisieren (F5)"
+        aria-label="Aktualisieren"><RefreshIcon class="size-3.5" /></Button
+      >
+    {:else if activeSession}
       <Button
         variant="ghost"
         size="sm"
@@ -473,13 +499,64 @@
           class="h-12! text-base!"
         />
       </div>
-      <Button variant="ghost" size="sm" onclick={pickRoot} title={root} class="font-mono text-xs">
+      <Button
+        variant="ghost"
+        size="sm"
+        onclick={pickRoot}
+        title="Dev-Ordner wechseln (Strg+O): {root}"
+        class="text-muted-foreground font-mono text-xs"
+      >
         <FolderIcon class="size-3.5" />
         <span class="max-w-44 truncate">{short}</span>
       </Button>
-      <Button variant="ghost" size="icon" onclick={rescan} aria-label="Neu einlesen (Strg+R)">
-        <RefreshIcon class="size-4 {scanning ? 'animate-spin' : ''}" />
-      </Button>
+      <!-- Aktionen als Icons: dort, wo man ohnehin arbeitet, statt in der Fusszeile -->
+      <div class="text-muted-foreground flex items-center">
+        <Button variant="ghost" size="icon" onclick={rescan} title="Neu einlesen (Strg+R)" aria-label="Neu einlesen">
+          <RefreshIcon class="size-4 {scanning ? 'animate-spin' : ''}" />
+        </Button>
+        <Button variant="ghost" size="icon" onclick={() => (cloneOpen = true)} title="Repo klonen (Strg+N)" aria-label="Repo klonen">
+          <DownloadIcon class="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="relative"
+          onclick={() => (accountsOpen = true)}
+          title="GitHub- und GitLab-Konten"
+          aria-label="Konten"
+        >
+          <UsersIcon class="size-4" />
+          {#if accounts.length}
+            <span class="bg-primary absolute top-1.5 right-1.5 size-1.5 rounded-full"></span>
+          {/if}
+        </Button>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger
+            class="hover:bg-accent hover:text-foreground grid size-9 place-items-center rounded-md"
+            title="Einstellungen"
+            aria-label="Einstellungen"><SettingsIcon class="size-4" /></DropdownMenu.Trigger
+          >
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              align="end"
+              sideOffset={4}
+              class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-56 rounded-lg p-1 text-xs shadow-lg ring-1"
+            >
+              {@render setting("Mit Windows starten", autostart, toggleAutostart, PowerIcon)}
+              {@render setting("Schließen legt ins Tray", tray, toggleTray, InboxIcon)}
+              <DropdownMenu.Separator class="bg-border my-1 h-px" />
+              <DropdownMenu.Item
+                class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5"
+                onSelect={() => (help = true)}
+              >
+                <KeyboardIcon class="text-muted-foreground size-3.5" />
+                <span class="flex-1">Tastenkürzel</span>
+                <kbd class="text-muted-foreground font-mono text-[10px]">F1</kbd>
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
+      </div>
     </div>
 
     <Command.List class="max-h-none flex-1 overflow-y-auto">
@@ -595,63 +672,56 @@
   {#if gitRepo}
     <div class="min-h-0 flex-1">
       {#key gitRepo.path}
-        <GitView bind:this={gitView} repo={gitRepo.path} onclaude={() => launch(gitRepo!)} />
+        <GitView bind:this={gitView} repo={gitRepo.path} />
       {/key}
     </div>
   {/if}
 
+  <!-- Nur Status und Tastenhinweise; Aktionen und Einstellungen sitzen oben in der Suchleiste -->
   <footer
-    class="bg-chrome border-border text-muted-foreground flex items-center gap-3 border-t px-3.5 py-2 text-[11px] {view !== 'list'
+    class="bg-chrome border-border text-muted-foreground flex items-center gap-4 border-t px-3.5 py-1.5 text-[11px] whitespace-nowrap {view !== 'list'
       ? 'hidden'
       : ''}"
   >
-    <span>{flat.length} von {repos.length}</span>
-    <Separator orientation="vertical" class="h-3.5!" />
-    <span>
-      {#if scanning}Lese ein …{:else if fromCache}Stand gespeichert{:else if scannedAt}Aktualisiert
-        {new Date(scannedAt).toLocaleTimeString("de-DE", {
-          hour: "2-digit",
-          minute: "2-digit",
-        })}{/if}
+    <span class="tabular-nums">
+      {flat.length === repos.length ? `${repos.length} Projekte` : `${flat.length} von ${repos.length}`}
+    </span>
+    <span class="opacity-70">
+      {#if scanning}Lese ein …{:else if fromCache}Stand gespeichert{:else if scannedAt}aktualisiert
+        {new Date(scannedAt).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}{/if}
     </span>
     <span class="flex-1"></span>
-    <Button variant="ghost" size="sm" class="h-6 gap-1.5 text-[11px]" onclick={() => (cloneOpen = true)} title="Repo klonen (Strg+N)">
-      <DownloadIcon class="size-3.5" /> Klonen
-    </Button>
-    <Button variant="ghost" size="sm" class="h-6 gap-1.5 text-[11px]" onclick={() => (accountsOpen = true)} title="GitHub- und GitLab-Konten">
-      <UsersIcon class="size-3.5" /> Konten{#if accounts.length}<span class="tabular-nums">({accounts.length})</span>{/if}
-    </Button>
-    <Separator orientation="vertical" class="h-3.5!" />
-    <Button
-      variant="ghost"
-      size="sm"
-      class="h-6 gap-1.5 text-[11px] {autostart ? 'text-primary' : ''}"
-      onclick={toggleAutostart}
-      aria-pressed={autostart}
-      title={autostart ? "Startet mit Windows" : "Beim Anmelden automatisch starten"}
-    >
-      <PowerIcon class="size-3.5" /> Autostart <span class="inline-block w-6 text-left">{autostart ? "an" : "aus"}</span>
-    </Button>
-    <Button
-      variant="ghost"
-      size="sm"
-      class="h-6 gap-1.5 text-[11px] {tray ? 'text-primary' : ''}"
-      onclick={toggleTray}
-      aria-pressed={tray}
-      title={tray ? "Schließen versteckt ins Tray" : "Schließen beendet die App"}
-    >
-      <InboxIcon class="size-3.5" /> Tray <span class="inline-block w-6 text-left">{tray ? "an" : "aus"}</span>
-    </Button>
-    <Separator orientation="vertical" class="h-3.5!" />
-    <span class="flex items-center gap-1.5">
-      <kbd class="border-border rounded border px-1.5 py-0.5 font-mono">⏎</kbd> Git
-      <kbd class="border-border rounded border px-1.5 py-0.5 font-mono">^⏎</kbd> Claude
-    </span>
-    <Button variant="ghost" size="sm" class="h-6 gap-1.5 text-[11px]" onclick={() => (help = true)}>
-      <KeyboardIcon class="size-3.5" /> F1
-    </Button>
+    {#each [["⏎", "Git"], ["Strg ⏎", "Claude"]] as [key, what] (key)}
+      <span class="flex items-center gap-1.5">{@render kbd(key)} {what}</span>
+    {/each}
+    <button class="hover:text-foreground flex items-center gap-1.5" onclick={() => (help = true)}>
+      {@render kbd("F1")} Hilfe
+    </button>
   </footer>
 </div>
+
+{#snippet kbd(key: string)}
+  <kbd class="bg-secondary text-foreground/80 rounded px-1.5 py-px font-mono text-[10px]">{key}</kbd>
+{/snippet}
+
+{#snippet setting(label: string, on: boolean, toggle: () => void, Icon: typeof PowerIcon)}
+  <!-- Schalter bleiben im offenen Menue, damit man beide nacheinander umlegen kann -->
+  <DropdownMenu.Item
+    class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5"
+    closeOnSelect={false}
+    onSelect={toggle}
+  >
+    <Icon class="text-muted-foreground size-3.5" />
+    <span class="flex-1">{label}</span>
+    <span
+      class="relative h-3.5 w-6 rounded-full transition-colors {on ? 'bg-primary' : 'bg-secondary ring-border ring-1'}"
+      aria-hidden="true"
+      ><span
+        class="bg-foreground absolute top-0.5 size-2.5 rounded-full transition-all {on ? 'left-3' : 'left-0.5'}"
+      ></span></span
+    >
+  </DropdownMenu.Item>
+{/snippet}
 
 {#snippet keys(title: string, list: string[][])}
   <div>

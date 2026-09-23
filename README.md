@@ -88,7 +88,7 @@ rechts die Tabs *Änderungen* und *Verlauf*. Aktionen gibt es per Rechtsklick, L
   Konflikte mit *Fortsetzen* und *Abbrechen*. Klick auf eine Konfliktdatei öffnet den
   Merge-Editor: pro Block Ours, Theirs, beide oder Basis wählen, `F7` springt zum nächsten
   Konflikt, `Strg` + `S` speichert und markiert die Datei als gelöst.
-- *Claude* in der Werkzeugleiste startet Claude im selben Projekt.
+- *Claude*, *Explorer* und Aktualisieren stehen oben in der Titelleiste.
 
 | Taste | Aktion |
 | --- | --- |

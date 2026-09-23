@@ -1,6 +1,5 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
   import { DropdownMenu } from "bits-ui";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -19,12 +18,9 @@
   import UploadIcon from "@lucide/svelte/icons/upload";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
-  import TerminalIcon from "@lucide/svelte/icons/terminal";
-  import FolderOpenIcon from "@lucide/svelte/icons/folder-open";
-  import RefreshIcon from "@lucide/svelte/icons/refresh-cw";
   import TriangleAlertIcon from "@lucide/svelte/icons/triangle-alert";
 
-  let { repo, onclaude }: { repo: string; onclaude: () => void } = $props();
+  let { repo }: { repo: string } = $props();
 
   let status = $state<Status | null>(null);
   let refreshKey = $state(0);
@@ -53,6 +49,9 @@
     }
     if (force || before !== `${status?.head}|${status?.branch}`) refreshKey++;
   }
+
+  /** Fuer den Aktualisieren-Knopf in der Titelleiste. */
+  export const reload = () => refresh();
 
   let mergeDirty = $state(false);
   /** Offener Merge-Editor mit Entscheidungen: erst nachfragen. */
@@ -110,14 +109,6 @@
     if (s) await run("Stash", () => git.stashPush(repo, s.message.trim() || null, s.untracked));
   }
 
-  async function reveal() {
-    try {
-      await invoke("reveal", { path: repo });
-    } catch (e) {
-      error = String(e);
-    }
-  }
-
   /** Gleiche Ref zweimal anklicken soll erneut springen, daher kurz auf null. */
   async function selectRef(ref: string) {
     if (!canLeave()) return;
@@ -144,7 +135,7 @@
 
 <svelte:window {onkeydown} onfocus={() => refresh(false)} />
 
-{#snippet tool(label: string, title: string, onclick: () => void, Icon: typeof RefreshIcon)}
+{#snippet tool(label: string, title: string, onclick: () => void, Icon: typeof CloudDownloadIcon)}
   <Button variant="ghost" size="sm" class="h-7 gap-1.5 px-2 text-[11px]" {onclick} {title} disabled={!!busy}>
     <Icon class="size-3.5" />
     {label}
@@ -195,11 +186,6 @@
     {@render tool("Branch", "Neuer Branch ab HEAD", () => (branchName = ""), GitBranchPlusIcon)}
     <span class="flex-1"></span>
     {#if busy}<span class="text-muted-foreground mr-2 text-[11px]">{busy} läuft …</span>{/if}
-    {@render tool("Claude", "Claude im Projekt öffnen", onclaude, TerminalIcon)}
-    {@render tool("Explorer", "Ordner im Explorer öffnen", reveal, FolderOpenIcon)}
-    <Button variant="ghost" size="icon" class="size-7" onclick={() => refresh()} title="Aktualisieren (F5)" aria-label="Aktualisieren">
-      <RefreshIcon class="size-3.5" />
-    </Button>
   </div>
 
   {#if status && status.state !== "clean"}
