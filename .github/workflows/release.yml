@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - "v*"
-    branches:
-      - cross-platform # TEMP
   workflow_dispatch:
 
 permissions:
