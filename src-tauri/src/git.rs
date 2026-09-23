@@ -815,15 +815,16 @@ fn set_base(repo: &str, base: Option<&str>) -> Result<(), String> {
 /// Hauptbranch, gegen den "noch nicht gemergt" gezaehlt wird: eingestellt, sonst origin/HEAD, sonst die ueblichen Namen.
 fn base_branch(repo: &str) -> Option<String> {
     // Geloeschter oder umbenannter Branch in der Config: auf automatisch zurueckfallen.
-    if let Some(b) = configured_base(repo) {
-        if ok(git(repo).args(["rev-parse", "--verify", "--quiet", &format!("{b}^{{commit}}")])) {
-            return Some(b);
-        }
+    let valid = |b: &String| ok(git(repo).args(["rev-parse", "--verify", "--quiet", &format!("{b}^{{commit}}")]));
+    if let Some(b) = configured_base(repo).filter(valid) {
+        return Some(b);
     }
+    // Neueres git liefert auch ein verwaistes origin/HEAD, daher ebenfalls pruefen.
     let head = out(git(repo).args(["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"]))
         .ok()
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+        .filter(|s| !s.is_empty())
+        .filter(valid);
     head.or_else(|| {
         ["origin/main", "origin/master", "main", "master"]
             .into_iter()
@@ -1439,7 +1440,9 @@ refs/remotes/origin/feature/x\x1f \x1f\x1f\x1fs3\x1fd\x1fsub: mit doppelpunkt\n"
 
         assert!(inside("C:/r", "a/b.txt").is_ok());
         assert!(inside("C:/r", "../x").is_err());
+        #[cfg(windows)]
         assert!(inside("C:/r", "C:/x").is_err());
+        assert!(inside("C:/r", "/x").is_err());
         assert!(inside("C:/r", "").is_err());
         assert!(inside("C:/r", ".GIT/hooks/pre-commit").is_err());
         assert!(inside("C:/r", ".git./config").is_err());
