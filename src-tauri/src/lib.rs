@@ -7,6 +7,9 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{Manager, WindowEvent};
 use walkdir::WalkDir;
 
+// Terminal in der App (ersetzt das externe wt.exe-Fenster).
+mod pty;
+
 #[derive(Serialize)]
 struct Repo {
     path: String,
@@ -195,33 +198,6 @@ fn scan_blocking(root: String) -> Result<Vec<Repo>, String> {
     Ok(repos)
 }
 
-/// Oeffnet ein neues Terminal-Fenster im Projektordner und startet `claude`.
-#[tauri::command]
-fn launch(path: String) -> Result<(), String> {
-    let dir = PathBuf::from(&path);
-    if !dir.is_dir() {
-        return Err(format!("Ordner nicht gefunden: {path}"));
-    }
-
-    // Windows Terminal bevorzugt, sonst klassische Konsole.
-    let wt = Command::new("wt.exe")
-        .arg("-d")
-        .arg(&dir)
-        .args(["cmd", "/k", "claude"])
-        .spawn();
-    if wt.is_ok() {
-        return Ok(());
-    }
-
-    Command::new("cmd")
-        .args(["/c", "start", "", "/D"])
-        .arg(&dir)
-        .args(["cmd", "/k", "claude"])
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("Terminal konnte nicht gestartet werden: {e}"))
-}
-
 /// Oeffnet den Projektordner im Datei-Explorer.
 #[tauri::command]
 fn reveal(path: String) -> Result<(), String> {
@@ -288,7 +264,16 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![default_root, scan, launch, reveal])
+        .manage(pty::Ptys::default())
+        .invoke_handler(tauri::generate_handler![
+            default_root,
+            scan,
+            reveal,
+            pty::pty_open,
+            pty::pty_write,
+            pty::pty_resize,
+            pty::pty_close
+        ])
         .setup(|app| tray(app.handle()).map_err(Into::into))
         // Schliessen versteckt nur — raus kommt man ueber das Tray-Menue.
         .on_window_event(|window, event| {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { open } from "@tauri-apps/plugin-dialog";
@@ -20,8 +20,10 @@
   import MinusIcon from "@lucide/svelte/icons/minus";
   import SquareIcon from "@lucide/svelte/icons/square";
   import XIcon from "@lucide/svelte/icons/x";
+  import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
   import { fuzzy } from "$lib/fuzzy";
   import IdleAmongUs from "$lib/components/IdleAmongUs.svelte";
+  import Terminal from "$lib/components/Terminal.svelte";
 
   type Repo = {
     path: string;
@@ -62,6 +64,12 @@
   let pins = $state<string[]>([]);
   let autostart = $state(false);
   let input = $state<HTMLInputElement | null>(null);
+  // ponytail: keine Tabs-UI, eine Session pro Projekt; Tab-Leiste wenn mehrere parallel sichtbar sein sollen.
+  let sessions = $state<{ id: string; repo: Repo }[]>([]);
+  let active = $state<string | null>(null);
+  let seq = 0;
+  const activeSession = $derived(sessions.find((s) => s.id === active));
+  const running = $derived(new Set(sessions.map((s) => s.repo.path)));
 
   async function toggleAutostart() {
     try {
@@ -171,20 +179,49 @@
     await rescan();
   }
 
-  async function run(cmd: "launch" | "reveal", repo?: Repo) {
+  /** Offene Session des Projekts zeigen, sonst eine neue starten. */
+  function launch(repo?: Repo) {
+    if (!repo) return;
+    let s = sessions.find((s) => s.repo.path === repo.path);
+    if (!s) sessions.push((s = { id: `t${++seq}`, repo }));
+    active = s.id;
+  }
+
+  async function reveal(repo?: Repo) {
     if (!repo) return;
     try {
-      await invoke(cmd, { path: repo.path });
+      await invoke("reveal", { path: repo.path });
     } catch (e) {
       error = String(e);
     }
   }
 
+  async function back() {
+    active = null;
+    await tick();
+    input?.focus();
+  }
+
+  /** Aus der Liste nehmen; der Terminal-Unmount schliesst die PTY. */
+  function closeSession(id: string) {
+    sessions = sessions.filter((s) => s.id !== id);
+    if (active === id) back();
+  }
+
   function onKey(e: KeyboardEvent) {
+    // Im Terminal gehoeren fast alle Kuerzel der Shell (Readline: Strg+R/K/E/P/O ...).
+    if (active) {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "w") {
+        e.preventDefault();
+        back();
+      }
+      return;
+    }
+
     const ctrl = e.ctrlKey || e.metaKey;
 
     if (ctrl && e.key >= "1" && e.key <= "9") {
-      run("launch", flat[Number(e.key) - 1]?.repo);
+      launch(flat[Number(e.key) - 1]?.repo);
     } else if (ctrl && e.key.toLowerCase() === "k") {
       input?.select();
     } else if (ctrl && e.key.toLowerCase() === "r") {
@@ -192,7 +229,7 @@
     } else if (ctrl && e.key.toLowerCase() === "o") {
       pickRoot();
     } else if (ctrl && e.key.toLowerCase() === "e") {
-      run("reveal", current?.repo);
+      reveal(current?.repo);
     } else if (ctrl && e.key.toLowerCase() === "p") {
       if (current) togglePin(current.repo.path);
     } else if (e.key === "F1" || (ctrl && e.key === "/")) {
@@ -234,15 +271,33 @@
   class="bg-chrome border-border flex h-9 items-center border-b pl-3.5"
   data-tauri-drag-region
 >
-  <img
-    src="/logo.png"
-    alt=""
-    class="mr-2 size-4 [image-rendering:pixelated]"
-    data-tauri-drag-region
-  />
-  <span class="text-muted-foreground flex-1 text-xs font-semibold" data-tauri-drag-region>
-    Open Claude
-  </span>
+  {#if activeSession}
+    <button
+      class="text-muted-foreground hover:bg-secondary hover:text-foreground -ml-3.5 mr-1 grid h-9 w-10 place-items-center"
+      onclick={back}
+      aria-label="Zurück zur Liste (Strg+Umschalt+W)"
+      title="Zurück zur Liste (Strg+Umschalt+W)"><ArrowLeftIcon class="size-3.5" /></button
+    >
+    <span class="flex-1 truncate text-xs font-semibold" data-tauri-drag-region>
+      {split(activeSession.repo.rel)[1]}
+    </span>
+    <Button
+      variant="ghost"
+      size="sm"
+      class="text-muted-foreground mr-1 h-6 text-[11px]"
+      onclick={() => closeSession(activeSession.id)}>Sitzung beenden</Button
+    >
+  {:else}
+    <img
+      src="/logo.png"
+      alt=""
+      class="mr-2 size-4 [image-rendering:pixelated]"
+      data-tauri-drag-region
+    />
+    <span class="text-muted-foreground flex-1 text-xs font-semibold" data-tauri-drag-region>
+      Open Claude
+    </span>
+  {/if}
   <button
     class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 place-items-center"
     onclick={() => getCurrentWindow().minimize()}
@@ -265,7 +320,7 @@
     shouldFilter={false}
     bind:value={selected}
     loop
-    class="bg-background flex-1 rounded-none! p-0"
+    class="bg-background flex-1 rounded-none! p-0 {active ? 'hidden!' : ''}"
   >
     <div class="border-border flex items-center gap-2 border-b pr-2">
       <div class="flex-1 [&_[data-slot=command-input-wrapper]]:p-0">
@@ -301,7 +356,7 @@
               {@const nr = flat.indexOf(item) + 1}
               <Command.Item
                 value={item.repo.path}
-                onSelect={() => run("launch", item.repo)}
+                onSelect={() => launch(item.repo)}
                 class="gap-3 px-3 py-2"
               >
                 {@const pinned = pins.includes(item.repo.path)}
@@ -332,6 +387,13 @@
                     </div>
                   {/if}
                 </div>
+
+                {#if running.has(item.repo.path)}
+                  <Badge variant="outline" class="text-primary gap-1.5 text-[11px]">
+                    <span class="size-2 animate-pulse rounded-full bg-current"></span>
+                    läuft
+                  </Badge>
+                {/if}
 
                 {#each item.repo.langs ?? [] as lang (lang)}
                   <Badge variant="outline" class="text-muted-foreground gap-1.5 text-[11px]">
@@ -366,8 +428,22 @@
     </Command.List>
   </Command.Root>
 
+  <!-- Alle Terminals bleiben gemountet, sonst stirbt claude beim Zurueckgehen. -->
+  <div class="min-h-0 flex-1 {active ? '' : 'hidden'}">
+    {#each sessions as s (s.id)}
+      <Terminal
+        id={s.id}
+        cwd={s.repo.path}
+        visible={s.id === active}
+        onexit={() => closeSession(s.id)}
+      />
+    {/each}
+  </div>
+
   <footer
-    class="bg-chrome border-border text-muted-foreground flex items-center gap-3 border-t px-3.5 py-2 text-[11px]"
+    class="bg-chrome border-border text-muted-foreground flex items-center gap-3 border-t px-3.5 py-2 text-[11px] {active
+      ? 'hidden'
+      : ''}"
   >
     <span>{flat.length} von {repos.length}</span>
     <Separator orientation="vertical" class="h-3.5!" />
@@ -406,7 +482,7 @@
       <Dialog.Description>Alles lässt sich ohne Maus bedienen.</Dialog.Description>
     </Dialog.Header>
     <dl class="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2.5 text-sm">
-      {#each [["⏎", "Claude im Projekt starten"], ["↑ ↓", "Projekt wählen"], ["Strg + 1 … 9", "Treffer direkt starten"], ["Strg + K", "Suche fokussieren"], ["Strg + P", "Projekt anpinnen"], ["Strg + E", "Ordner im Explorer öffnen"], ["Strg + R", "Neu einlesen"], ["Strg + O", "Dev-Ordner wechseln"], ["Esc", "Suche leeren, sonst schließen"]] as [key, what]}
+      {#each [["⏎", "Claude im Projekt starten"], ["↑ ↓", "Projekt wählen"], ["Strg + 1 … 9", "Treffer direkt starten"], ["Strg + K", "Suche fokussieren"], ["Strg + P", "Projekt anpinnen"], ["Strg + E", "Ordner im Explorer öffnen"], ["Strg + R", "Neu einlesen"], ["Strg + O", "Dev-Ordner wechseln"], ["Strg + ⇧ + W", "Terminal verlassen, Sitzung läuft weiter"], ["Esc", "Suche leeren, sonst schließen"]] as [key, what]}
         <dt class="border-border rounded border px-1.5 py-0.5 text-center font-mono text-[11px]">
           {key}
         </dt>
