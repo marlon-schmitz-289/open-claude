@@ -200,7 +200,7 @@ fn scan_blocking(root: String) -> Result<Vec<Repo>, String> {
             .collect()
     });
 
-    repos.sort_by(|a, b| a.rel.to_lowercase().cmp(&b.rel.to_lowercase()));
+    repos.sort_by_key(|a| a.rel.to_lowercase());
     Ok(repos)
 }
 
