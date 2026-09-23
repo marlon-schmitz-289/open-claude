@@ -17,6 +17,7 @@
   import KeyboardIcon from "@lucide/svelte/icons/keyboard";
   import StarIcon from "@lucide/svelte/icons/star";
   import PowerIcon from "@lucide/svelte/icons/power";
+  import InboxIcon from "@lucide/svelte/icons/inbox";
   import MinusIcon from "@lucide/svelte/icons/minus";
   import SquareIcon from "@lucide/svelte/icons/square";
   import XIcon from "@lucide/svelte/icons/x";
@@ -63,6 +64,7 @@
   let help = $state(false);
   let pins = $state<string[]>([]);
   let autostart = $state(false);
+  let tray = $state(true);
   let input = $state<HTMLInputElement | null>(null);
   // ponytail: keine Tabs-UI, eine Session pro Projekt; Tab-Leiste wenn mehrere parallel sichtbar sein sollen.
   let sessions = $state<{ id: string; repo: Repo }[]>([]);
@@ -78,6 +80,12 @@
     } catch (e) {
       error = String(e);
     }
+  }
+
+  async function toggleTray() {
+    tray = !tray;
+    await invoke("set_tray", { on: tray });
+    await store.set("tray", tray);
   }
 
   async function togglePin(path: string) {
@@ -142,6 +150,8 @@
     root = (await store.get<string>("root")) ?? (await invoke<string>("default_root"));
     pins = (await store.get<string[]>("pins")) ?? [];
     autostart = await isEnabled().catch(() => false);
+    tray = (await store.get<boolean>("tray")) ?? true;
+    await invoke("set_tray", { on: tray });
 
     // Zuerst den letzten Stand zeigen, dann im Hintergrund frisch einlesen.
     const cached = await store.get<Cache>("cache");
@@ -214,6 +224,9 @@
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "w") {
         e.preventDefault();
         back();
+      } else if (e.altKey && !e.ctrlKey && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        reveal(activeSession?.repo);
       }
       return;
     }
@@ -389,9 +402,20 @@
                 </div>
 
                 {#if running.has(item.repo.path)}
-                  <Badge variant="outline" class="text-primary gap-1.5 text-[11px]">
+                  <Badge variant="outline" class="text-primary gap-1.5 pr-0.5 text-[11px]">
                     <span class="size-2 animate-pulse rounded-full bg-current"></span>
                     läuft
+                    <button
+                      class="text-muted-foreground hover:bg-destructive/20 hover:text-destructive grid size-4 place-items-center rounded"
+                      onpointerdown={(e) => e.stopPropagation()}
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        const s = sessions.find((s) => s.repo.path === item.repo.path);
+                        if (s) closeSession(s.id);
+                      }}
+                      aria-label="Sitzung beenden"
+                      title="Sitzung beenden"><XIcon class="size-3" /></button
+                    >
                   </Badge>
                 {/if}
 
@@ -465,6 +489,16 @@
     >
       <PowerIcon class="size-3.5" /> Autostart {autostart ? "an" : "aus"}
     </Button>
+    <Button
+      variant="ghost"
+      size="sm"
+      class="h-6 gap-1.5 text-[11px] {tray ? 'text-primary' : ''}"
+      onclick={toggleTray}
+      aria-pressed={tray}
+      title={tray ? "Schließen versteckt ins Tray" : "Schließen beendet die App"}
+    >
+      <InboxIcon class="size-3.5" /> Tray {tray ? "an" : "aus"}
+    </Button>
     <Separator orientation="vertical" class="h-3.5!" />
     <span class="flex items-center gap-1.5">
       <kbd class="border-border rounded border px-1.5 py-0.5 font-mono">⏎</kbd> Claude starten
@@ -482,7 +516,7 @@
       <Dialog.Description>Alles lässt sich ohne Maus bedienen.</Dialog.Description>
     </Dialog.Header>
     <dl class="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2.5 text-sm">
-      {#each [["⏎", "Claude im Projekt starten"], ["↑ ↓", "Projekt wählen"], ["Strg + 1 … 9", "Treffer direkt starten"], ["Strg + K", "Suche fokussieren"], ["Strg + P", "Projekt anpinnen"], ["Strg + E", "Ordner im Explorer öffnen"], ["Strg + R", "Neu einlesen"], ["Strg + O", "Dev-Ordner wechseln"], ["Strg + ⇧ + W", "Terminal verlassen, Sitzung läuft weiter"], ["Esc", "Suche leeren, sonst schließen"]] as [key, what]}
+      {#each [["⏎", "Claude im Projekt starten"], ["↑ ↓", "Projekt wählen"], ["Strg + 1 … 9", "Treffer direkt starten"], ["Strg + K", "Suche fokussieren"], ["Strg + P", "Projekt anpinnen"], ["Strg + E", "Ordner im Explorer öffnen"], ["Strg + R", "Neu einlesen"], ["Strg + O", "Dev-Ordner wechseln"], ["Strg + ⇧ + W", "Terminal verlassen, Sitzung läuft weiter"], ["Alt + E", "Im Terminal: Ordner im Explorer öffnen"], ["Esc", "Suche leeren, sonst schließen"]] as [key, what]}
         <dt class="border-border rounded border px-1.5 py-0.5 text-center font-mono text-[11px]">
           {key}
         </dt>

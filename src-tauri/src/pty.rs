@@ -29,6 +29,15 @@ impl Ptys {
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Session>> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
+
+    /// Beim Beenden: sonst ueberleben Shell und claude die App.
+    pub fn close_all(&self) {
+        let sessions: Vec<Session> = self.lock().drain().map(|(_, s)| s).collect();
+        for mut s in sessions {
+            let _ = s.killer.kill();
+            // Drop schliesst die Pseudo-Konsole und reisst angehaengte Prozesse mit.
+        }
+    }
 }
 
 /// id landet im Eventnamen, darum nur ein sicherer Zeichensatz.

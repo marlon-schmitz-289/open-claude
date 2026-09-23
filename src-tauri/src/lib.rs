@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
@@ -222,7 +223,15 @@ fn reopen(app: &tauri::AppHandle) {
     }
 }
 
-/// Tray-Icon mit Menue. Einziger Weg, die App wirklich zu beenden.
+/// Schliessen versteckt ins Tray statt zu beenden. Das Frontend setzt es aus den Einstellungen.
+static TRAY: AtomicBool = AtomicBool::new(true);
+
+#[tauri::command]
+fn set_tray(on: bool) {
+    TRAY.store(on, Ordering::Relaxed);
+}
+
+/// Tray-Icon mit Menue. Mit Tray an der einzige Weg, die App wirklich zu beenden.
 fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let oeffnen = MenuItem::with_id(app, "oeffnen", "Öffnen", true, None::<&str>)?;
     let beenden = MenuItem::with_id(app, "beenden", "Beenden", true, None::<&str>)?;
@@ -258,6 +267,8 @@ fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Muss als erstes Plugin rein. Zweiter Start (z.B. neben Autostart) holt nur das Fenster vor.
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| reopen(app)))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -269,21 +280,30 @@ pub fn run() {
             default_root,
             scan,
             reveal,
+            set_tray,
             pty::pty_open,
             pty::pty_write,
             pty::pty_resize,
             pty::pty_close
         ])
         .setup(|app| tray(app.handle()).map_err(Into::into))
-        // Schliessen versteckt nur — raus kommt man ueber das Tray-Menue.
+        // Mit Tray versteckt Schliessen nur — raus kommt man dann ueber das Tray-Menue.
         .on_window_event(|window, event| {
+            if !TRAY.load(Ordering::Relaxed) {
+                return;
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                app.state::<pty::Ptys>().close_all();
+            }
+        });
 }
 
 #[cfg(test)]

@@ -33,7 +33,10 @@
   }
 
   function onKeyEvent(e: KeyboardEvent) {
-    if (e.type !== "keydown" || !e.ctrlKey) return true;
+    if (e.type !== "keydown") return true;
+    // Alt+E oeffnet den Explorer, das macht der App-Handler.
+    if (e.altKey && !e.ctrlKey && e.key.toLowerCase() === "e") return false;
+    if (!e.ctrlKey) return true;
     const key = e.key.toLowerCase();
     // false = xterm ignoriert das Event, es blubbert zum App-Handler am window.
     if (e.shiftKey && key === "w") return false;
@@ -109,6 +112,8 @@
 </script>
 
 <!-- ponytail: kein Scrollback ueber Neustart, Output lebt nur im xterm-Buffer. -->
-<div class="h-full p-2 pr-0 {visible ? '' : 'hidden'}">
-  <div bind:this={el} class="h-full"></div>
+<div class="h-full p-2 {visible ? '' : 'hidden'}">
+  <div class="bg-card border-border h-full overflow-hidden rounded-lg border p-2">
+    <div bind:this={el} class="h-full"></div>
+  </div>
 </div>
