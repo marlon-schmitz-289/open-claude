@@ -166,6 +166,8 @@
 
   // Maximiert-Zustand fuers Icon; aendert sich auch per Doppelklick auf die Titelleiste oder Win+Pfeil.
   let maximized = $state(false);
+  // macOS: native Ampeln im Overlay-Titelbalken (tauri.macos.conf.json) statt eigener Knoepfe.
+  const mac = navigator.userAgent.includes("Mac");
   onMount(() => {
     const win = getCurrentWindow();
     const sync = async () => (maximized = await win.isMaximized());
@@ -399,12 +401,12 @@
 <IdleAmongUs />
 
 <div
-  class="bg-chrome border-border flex h-9 items-center border-b pl-3.5"
+  class="bg-chrome border-border flex h-9 items-center border-b {mac ? 'pl-20' : 'pl-3.5'}"
   data-tauri-drag-region
 >
   {#if viewRepo}
     <button
-      class="text-muted-foreground hover:bg-secondary hover:text-foreground -ml-3.5 mr-1 grid h-9 w-10 place-items-center"
+      class="text-muted-foreground hover:bg-secondary hover:text-foreground {mac ? '' : '-ml-3.5'} mr-1 grid h-9 w-10 place-items-center"
       onclick={back}
       aria-label="Zurück zur Liste (Strg+Umschalt+W)"
       title="Zurück zur Liste (Strg+Umschalt+W)"><ArrowLeftIcon class="size-3.5" /></button
@@ -486,38 +488,40 @@
       Open Claude
     </span>
   {/if}
-  <!-- Fensterknoepfe wie bei Windows: nicht per Tab erreichbar, kein Fokusrahmen, Fokus bleibt im Terminal/der Suche. -->
-  <button
-    tabindex="-1"
-    onmousedown={(e) => e.preventDefault()}
-    class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 place-items-center outline-none"
-    onclick={() => getCurrentWindow().minimize()}
-    aria-label="Minimieren"><MinusIcon class="size-3.5" /></button
-  >
-  <button
-    tabindex="-1"
-    onmousedown={(e) => e.preventDefault()}
-    class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 place-items-center outline-none"
-    onclick={() => getCurrentWindow().toggleMaximize()}
-    aria-label={maximized ? "Wiederherstellen" : "Maximieren"}
-  >
-    {#if maximized}
-      <!-- Wiederherstellen: vorderes Quadrat unten links, hinteres oben rechts -->
-      <svg class="size-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1">
-        <rect x="0.5" y="2.5" width="9" height="9" rx="1" />
-        <path d="M2.5 2.5V1.5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-1" />
-      </svg>
-    {:else}
-      <SquareIcon class="size-3" />
-    {/if}
-  </button>
-  <button
-    tabindex="-1"
-    onmousedown={(e) => e.preventDefault()}
-    class="text-muted-foreground grid h-9 w-11 place-items-center outline-none hover:bg-[#b4404a] hover:text-white"
-    onclick={() => getCurrentWindow().close()}
-    aria-label="Schließen"><XIcon class="size-3.5" /></button
-  >
+  {#if !mac}
+    <!-- Fensterknoepfe wie bei Windows: nicht per Tab erreichbar, kein Fokusrahmen, Fokus bleibt im Terminal/der Suche. -->
+    <button
+      tabindex="-1"
+      onmousedown={(e) => e.preventDefault()}
+      class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 place-items-center outline-none"
+      onclick={() => getCurrentWindow().minimize()}
+      aria-label="Minimieren"><MinusIcon class="size-3.5" /></button
+    >
+    <button
+      tabindex="-1"
+      onmousedown={(e) => e.preventDefault()}
+      class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 place-items-center outline-none"
+      onclick={() => getCurrentWindow().toggleMaximize()}
+      aria-label={maximized ? "Wiederherstellen" : "Maximieren"}
+    >
+      {#if maximized}
+        <!-- Wiederherstellen: vorderes Quadrat unten links, hinteres oben rechts -->
+        <svg class="size-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1">
+          <rect x="0.5" y="2.5" width="9" height="9" rx="1" />
+          <path d="M2.5 2.5V1.5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-1" />
+        </svg>
+      {:else}
+        <SquareIcon class="size-3" />
+      {/if}
+    </button>
+    <button
+      tabindex="-1"
+      onmousedown={(e) => e.preventDefault()}
+      class="text-muted-foreground grid h-9 w-11 place-items-center outline-none hover:bg-[#b4404a] hover:text-white"
+      onclick={() => getCurrentWindow().close()}
+      aria-label="Schließen"><XIcon class="size-3.5" /></button
+    >
+  {/if}
 </div>
 
 <div class="flex h-[calc(100vh-2.25rem)] flex-col">

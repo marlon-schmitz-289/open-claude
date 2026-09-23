@@ -146,7 +146,9 @@ pub fn pty_open(
         .unwrap_or_default();
     let (program, args) =
         shell(cfg!(windows), &own, |k| std::env::var(k).ok(), |p| Path::new(p).is_file());
-    let mut cmd = CommandBuilder::new(program);
+    let (exe, pre) = crate::native(&program);
+    let mut cmd = CommandBuilder::new(exe);
+    cmd.args(pre);
     cmd.args(args);
     cmd.cwd(&cwd);
     cmd.env("TERM", "xterm-256color");

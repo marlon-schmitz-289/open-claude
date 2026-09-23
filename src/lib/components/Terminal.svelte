@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
@@ -35,6 +36,10 @@
     invoke("pty_resize", { id, cols: term.cols, rows: term.rows }).catch(() => {});
   }
 
+  // Tauri faengt Datei-Drops ab (kein HTML-drop), darum der Webview-Event. Pfade fuer die Shell quoten.
+  const win = navigator.userAgent.includes("Windows");
+  const quote = (p: string) => (win ? `"${p}"` : `'${p.replaceAll("'", "'\\''")}'`);
+
   function onKeyEvent(e: KeyboardEvent) {
     if (e.type !== "keydown") return true;
     // Alt+E (Explorer) und Alt+G (Git-Ansicht) macht der App-Handler.
@@ -64,6 +69,11 @@
     unlisten = [
       listen<number[]>(`pty:${id}`, (e) => term?.write(new Uint8Array(e.payload))),
       listen(`pty-exit:${id}`, () => onexit()),
+      getCurrentWebview().onDragDropEvent((e) => {
+        if (e.payload.type !== "drop" || !visible || !e.payload.paths.length) return;
+        term?.paste(e.payload.paths.map(quote).join(" ") + " ");
+        term?.focus();
+      }),
     ];
     // Farben aus der App; Hintergrund transparent, damit er von der Seite kommt.
     const css = getComputedStyle(document.documentElement);

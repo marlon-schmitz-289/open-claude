@@ -108,10 +108,22 @@ fn read_branch(repo: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// macOS: laeuft die App unter Rosetta (x86_64-Build auf Apple Silicon), erben Kinder die
+/// Architektur — /usr/bin/git scheitert dann an den arm64-only Command Line Tools (libxcrun).
+/// `arch -arm64 -x86_64` nimmt arm64 wo moeglich, auf Intel-Macs x86_64.
+pub(crate) fn native(program: &str) -> (&str, Vec<&str>) {
+    if cfg!(target_os = "macos") {
+        ("/usr/bin/arch", vec!["-arm64", "-x86_64", program])
+    } else {
+        (program, Vec::new())
+    }
+}
+
 /// Startet ein Kommando ohne eigenes Konsolenfenster.
 fn quiet(program: &str) -> Command {
-    #[cfg_attr(not(windows), allow(unused_mut))]
-    let mut cmd = Command::new(program);
+    let (exe, pre) = native(program);
+    let mut cmd = Command::new(exe);
+    cmd.args(pre);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
