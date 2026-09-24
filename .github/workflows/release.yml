@@ -55,6 +55,19 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # Tests vor dem Build; macOS x86_64 laeuft auf demselben Runner wie aarch64, einmal reicht
+      - name: Tests
+        if: matrix.name != 'macos-x86_64'
+        shell: bash
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+          npm run check
+          node --test src/lib/*.test.ts
+          cd src-tauri
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+
       # Changelog: Stichpunkte der feat/fix-Commits seit dem letzten Tag
       - name: Changelog
         id: notes
