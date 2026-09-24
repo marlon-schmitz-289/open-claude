@@ -29,12 +29,12 @@ jobs:
             args: ""
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Tags fuer den Changelog
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -103,7 +103,7 @@ jobs:
         with:
           args: ${{ matrix.args }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
         with:
           name: bundles-${{ matrix.name }}
