@@ -885,7 +885,7 @@
         ])}
         {@render keys("Git-Ansicht", [
           ["Esc", "Zurück zur Liste"],
-          ["Strg + 1 / 2", "Änderungen / Verlauf"],
+          ["Strg + 1 … 4", "Änderungen / Verlauf / Releases / Actions"],
           ["Strg + ⇧ + F", "Fetch"],
           ["Strg + ⇧ + L", "Pull"],
           ["Strg + ⇧ + P", "Push"],

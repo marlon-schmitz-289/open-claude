@@ -185,6 +185,68 @@ export type PullRequest = {
 
 export type CloneProgress = { line: string; percent: number | null };
 
+/** Ergebnis einer Forge-Abfrage zum Remote eines lokalen Repos; null, wenn Remote unbekannt oder kein Konto passt. */
+export type ForgeList<T> = { kind: ForgeKind; items: T[] } | null;
+
+export type ReleaseAsset = { name: string; size: number; downloads: number; url: string };
+
+export type Release = {
+  /** GitHub: numerische Release-ID als String; GitLab: Tag-Name (Releases haben dort keine eigene ID). */
+  id: string;
+  tag: string;
+  name: string;
+  /** Markdown, wird nur als Text angezeigt. */
+  body: string;
+  /** Nur GitHub; GitLab kennt keine Drafts/Prereleases (immer false). */
+  draft: boolean;
+  prerelease: boolean;
+  created_at: string;
+  published_at: string | null;
+  author: string;
+  web_url: string;
+  assets: ReleaseAsset[];
+};
+
+/** Anlegen/Bearbeiten. target: Branch oder SHA, falls der Tag noch nicht existiert (sonst null). */
+export type ReleaseInput = {
+  tag: string;
+  name: string;
+  body: string;
+  draft: boolean;
+  prerelease: boolean;
+  target: string | null;
+};
+
+export type RunStatus = "queued" | "running" | "success" | "failure" | "cancelled" | "skipped";
+
+/** GitHub-Actions-Workflow-Run bzw. GitLab-Pipeline. */
+export type Run = {
+  id: number;
+  /** Workflow-Name (GitHub) bzw. "Pipeline #<iid>" (GitLab). */
+  name: string;
+  /** Commit-Titel, falls die API ihn liefert, sonst leer. */
+  title: string;
+  branch: string;
+  sha: string;
+  /** push, pull_request, schedule, workflow_dispatch, tag … wie von der API. */
+  event: string;
+  status: RunStatus;
+  created_at: string;
+  duration_s: number | null;
+  web_url: string;
+};
+
+export type Job = {
+  id: number;
+  name: string;
+  /** GitLab-Stage, bei GitHub null. */
+  stage: string | null;
+  status: RunStatus;
+  started_at: string | null;
+  duration_s: number | null;
+  web_url: string;
+};
+
 export const forge = {
   /** Prueft den Token gegen die API und legt ihn ab. host z. B. "github.com", "gitlab.firma.de". */
   login: (kind: ForgeKind, host: string, token: string) =>
@@ -197,6 +259,19 @@ export const forge = {
     call<RemoteRepo[]>("forge_repos", { kind, host, query, page }),
   /** Offene PRs/MRs zum Remote-URL eines lokalen Repos; leer, wenn kein passendes Konto. */
   pulls: (remoteUrl: string) => call<PullRequest[]>("forge_pulls", { remoteUrl }),
+  /** Releases, neueste zuerst (GitHub inkl. Drafts, wenn der Token Schreibrechte hat). page ab 1, 30 pro Seite. */
+  releases: (remoteUrl: string, page: number) =>
+    call<ForgeList<Release>>("forge_releases", { remoteUrl, page }),
+  /** id null = neu anlegen, sonst bearbeiten (GitHub: ID, GitLab: Tag). Liefert den gespeicherten Stand. */
+  releaseSave: (remoteUrl: string, id: string | null, input: ReleaseInput) =>
+    call<Release>("forge_release_save", { remoteUrl, id, input }),
+  /** Loescht nur das Release, der Git-Tag bleibt. */
+  releaseDelete: (remoteUrl: string, id: string) => call<void>("forge_release_delete", { remoteUrl, id }),
+  /** Workflow-Runs bzw. Pipelines, neueste zuerst. branch leer = alle. page ab 1, 30 pro Seite. */
+  runs: (remoteUrl: string, branch: string, page: number) =>
+    call<ForgeList<Run>>("forge_runs", { remoteUrl, branch, page }),
+  /** Jobs eines Runs bzw. einer Pipeline. */
+  jobs: (remoteUrl: string, runId: number) => call<Job[]>("forge_jobs", { remoteUrl, runId }),
   /** Klont nach dest; Fortschritt als Event `clone:{id}` (CloneProgress). Liefert den Zielpfad. */
   clone: (id: string, url: string, dest: string) => call<string>("forge_clone", { id, url, dest }),
   /** Oeffnet eine URL im Standardbrowser. */

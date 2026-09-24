@@ -6,7 +6,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use base64::Engine;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
@@ -46,6 +46,71 @@ pub struct PullRequest {
     target_branch: String,
     draft: bool,
     updated_at: String,
+    web_url: String,
+}
+
+/// Option<ForgeList> serialisiert zu {kind, items} | null wie ForgeList<T> in git.ts.
+#[derive(Serialize)]
+pub struct ForgeList<T> {
+    kind: &'static str,
+    items: Vec<T>,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+pub struct ReleaseAsset {
+    name: String,
+    size: u64,
+    downloads: u64,
+    url: String,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+pub struct Release {
+    id: String,
+    tag: String,
+    name: String,
+    body: String,
+    draft: bool,
+    prerelease: bool,
+    created_at: String,
+    published_at: Option<String>,
+    author: String,
+    web_url: String,
+    assets: Vec<ReleaseAsset>,
+}
+
+#[derive(Deserialize)]
+pub struct ReleaseInput {
+    tag: String,
+    name: String,
+    body: String,
+    draft: bool,
+    prerelease: bool,
+    target: Option<String>,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+pub struct Run {
+    id: u64,
+    name: String,
+    title: String,
+    branch: String,
+    sha: String,
+    event: String,
+    status: &'static str,
+    created_at: String,
+    duration_s: Option<u64>,
+    web_url: String,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+pub struct Job {
+    id: u64,
+    name: String,
+    stage: Option<String>,
+    status: &'static str,
+    started_at: Option<String>,
+    duration_s: Option<u64>,
     web_url: String,
 }
 
@@ -111,6 +176,18 @@ fn token_for_host(host: &str) -> Result<Option<(&'static str, String)>, String> 
 }
 
 async fn api_get(kind: &str, host: &str, tok: &str, path: &str, query: &[(&str, String)]) -> Result<Value, String> {
+    api(kind, host, tok, reqwest::Method::GET, path, query, None).await
+}
+
+async fn api(
+    kind: &str,
+    host: &str,
+    tok: &str,
+    method: reqwest::Method,
+    path: &str,
+    query: &[(&str, String)],
+    body: Option<&Value>,
+) -> Result<Value, String> {
     let client = reqwest::Client::builder()
         .user_agent("ocui")
         .timeout(Duration::from_secs(30))
@@ -125,7 +202,11 @@ async fn api_get(kind: &str, host: &str, tok: &str, path: &str, query: &[(&str, 
         }))
         .build()
         .map_err(|e| e.to_string())?;
-    let req = client.get(format!("{}{path}", api_base(kind, host))).query(query);
+    let req = client.request(method, format!("{}{path}", api_base(kind, host))).query(query);
+    let req = match body {
+        Some(b) => req.json(b),
+        None => req,
+    };
     let req = if kind == "github" {
         req.bearer_auth(tok).header("Accept", "application/vnd.github+json")
     } else {
@@ -134,6 +215,7 @@ async fn api_get(kind: &str, host: &str, tok: &str, path: &str, query: &[(&str, 
     // reqwest-Fehler nennen nur die URL; der Token steckt im Header.
     let res = req.send().await.map_err(|e| format!("{host} nicht erreichbar: {e}"))?;
     let status = res.status();
+    // DELETE antwortet mit 204 ohne Body -> Null.
     let body: Value = res.json().await.unwrap_or(Value::Null);
     if !status.is_success() {
         return Err(api_error(host, status, &body));
@@ -328,18 +410,53 @@ fn encode(path: &str) -> String {
         .collect()
 }
 
+/// Remote eines lokalen Repos mit passendem Konto; base ist "/repos/o/r" bzw. "/projects/<kodiert>".
+struct Repo {
+    kind: &'static str,
+    host: String,
+    base: String,
+    tok: String,
+}
+
+impl Repo {
+    fn github(&self) -> bool {
+        self.kind == "github"
+    }
+
+    async fn call(&self, m: reqwest::Method, sub: &str, qs: &[(&str, String)], body: Option<&Value>) -> Result<Value, String> {
+        api(self.kind, &self.host, &self.tok, m, &format!("{}{sub}", self.base), qs, body).await
+    }
+
+    async fn get(&self, sub: &str, qs: &[(&str, String)]) -> Result<Value, String> {
+        self.call(reqwest::Method::GET, sub, qs, None).await
+    }
+}
+
+/// None = Remote nicht parsebar oder kein Konto fuer den Host.
+fn resolve(remote_url: &str) -> Result<Option<Repo>, String> {
+    let Some((host, path)) = parse_remote(remote_url) else {
+        return Ok(None);
+    };
+    Ok(token_for_host(&host)?.map(|(kind, tok)| {
+        let base = if kind == "github" { format!("/repos/{path}") } else { format!("/projects/{}", encode(&path)) };
+        Repo { kind, host, base, tok }
+    }))
+}
+
+/// Fuer Schreibzugriffe: ohne Konto ist das ein Fehler, kein leeres Ergebnis.
+fn require(remote_url: &str) -> Result<Repo, String> {
+    resolve(remote_url)?.ok_or_else(|| "Kein Konto für dieses Remote-Repository hinterlegt".to_string())
+}
+
 #[tauri::command]
 pub async fn forge_pulls(remote_url: String) -> Result<Vec<PullRequest>, String> {
-    let Some((host, path)) = parse_remote(&remote_url) else {
-        return Ok(Vec::new());
-    };
-    let Some((kind, tok)) = token_for_host(&host)? else {
+    let Some(repo) = resolve(&remote_url)? else {
         return Ok(Vec::new());
     };
     let per = ("per_page", "50".to_string());
-    if kind == "github" {
+    if repo.github() {
         let qs = [("state", "open".to_string()), per];
-        let body = api_get(kind, &host, &tok, &format!("/repos/{path}/pulls"), &qs).await?;
+        let body = repo.get("/pulls", &qs).await?;
         return Ok(body
             .as_array()
             .map(|l| {
@@ -359,7 +476,7 @@ pub async fn forge_pulls(remote_url: String) -> Result<Vec<PullRequest>, String>
             .unwrap_or_default());
     }
     let qs = [("state", "opened".to_string()), per];
-    let body = api_get(kind, &host, &tok, &format!("/projects/{}/merge_requests", encode(&path)), &qs).await?;
+    let body = repo.get("/merge_requests", &qs).await?;
     Ok(body
         .as_array()
         .map(|l| {
@@ -377,6 +494,285 @@ pub async fn forge_pulls(remote_url: String) -> Result<Vec<PullRequest>, String>
                 .collect()
         })
         .unwrap_or_default())
+}
+
+/// ISO-8601 ("2024-05-01T12:00:03.5Z", "...+02:00") -> Unix-Sekunden. Ohne chrono, das waere eine neue Dependency.
+fn unix_secs(ts: &str) -> Option<i64> {
+    let n = |s: &str, r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
+    let (y, mo, d) = (n(ts, 0..4)?, n(ts, 5..7)?, n(ts, 8..10)?);
+    let (h, mi, se) = (n(ts, 11..13)?, n(ts, 14..16)?, n(ts, 17..19)?);
+    let rest = ts.get(19..)?.trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
+    let off = match rest.chars().next() {
+        None | Some('Z') => 0,
+        Some(sign @ ('+' | '-')) => {
+            let o = n(rest, 1..3)? * 3600 + n(rest, 4..6)? * 60;
+            if sign == '-' { -o } else { o }
+        }
+        _ => return None,
+    };
+    // Tage seit 1970 nach Howard Hinnants days_from_civil.
+    let y = if mo <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * ((mo + 9) % 12) + 2) / 5 + d - 1;
+    let days = era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+    Some(days * 86400 + h * 3600 + mi * 60 + se - off)
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// Sekunden von start bis end; end fehlt = laeuft noch, dann bis now.
+fn span(start: &Value, end: &Value, now: i64) -> Option<u64> {
+    let a = unix_secs(start.as_str()?)?;
+    let b = end.as_str().map_or(Some(now), unix_secs)?;
+    Some((b - a).max(0) as u64)
+}
+
+// Wartet auf einen Menschen (Freigabe, manueller Job, Zeitplan): nicht "queued",
+// sonst gilt der Run als aktiv und die UI pollt womoeglich wochenlang. "skipped" ist das Naechstliegende.
+fn gh_status(status: &str, conclusion: &str) -> &'static str {
+    match (status, conclusion) {
+        ("in_progress", _) => "running",
+        ("waiting", _) => "skipped",
+        ("completed", "success") => "success",
+        ("completed", "cancelled") => "cancelled",
+        ("completed", "skipped" | "neutral" | "stale") => "skipped",
+        ("completed", _) => "failure",
+        _ => "queued",
+    }
+}
+
+fn gl_status(status: &str) -> &'static str {
+    match status {
+        "running" | "canceling" => "running",
+        "success" => "success",
+        "failed" => "failure",
+        "canceled" => "cancelled",
+        "skipped" | "manual" | "scheduled" => "skipped",
+        _ => "queued",
+    }
+}
+
+fn gh_release(r: &Value) -> Release {
+    let assets = r["assets"].as_array().map(Vec::as_slice).unwrap_or_default();
+    Release {
+        id: r["id"].as_u64().unwrap_or(0).to_string(),
+        tag: s(&r["tag_name"]),
+        name: s(&r["name"]),
+        body: s(&r["body"]),
+        draft: r["draft"].as_bool().unwrap_or(false),
+        prerelease: r["prerelease"].as_bool().unwrap_or(false),
+        created_at: s(&r["created_at"]),
+        published_at: opt(&r["published_at"]),
+        author: s(&r["author"]["login"]),
+        web_url: s(&r["html_url"]),
+        assets: assets
+            .iter()
+            .map(|a| ReleaseAsset {
+                name: s(&a["name"]),
+                size: a["size"].as_u64().unwrap_or(0),
+                downloads: a["download_count"].as_u64().unwrap_or(0),
+                url: s(&a["browser_download_url"]),
+            })
+            .collect(),
+    }
+}
+
+fn gl_release(r: &Value) -> Release {
+    let links = r["assets"]["links"].as_array().map(Vec::as_slice).unwrap_or_default();
+    Release {
+        id: s(&r["tag_name"]),
+        tag: s(&r["tag_name"]),
+        name: s(&r["name"]),
+        body: s(&r["description"]),
+        draft: false,
+        prerelease: false,
+        created_at: s(&r["created_at"]),
+        published_at: opt(&r["released_at"]),
+        author: s(&r["author"]["username"]),
+        web_url: s(&r["_links"]["self"]),
+        assets: links
+            .iter()
+            .map(|a| ReleaseAsset { name: s(&a["name"]), size: 0, downloads: 0, url: s(&a["url"]) })
+            .collect(),
+    }
+}
+
+fn gh_run(r: &Value, now: i64) -> Run {
+    let status = gh_status(r["status"].as_str().unwrap_or(""), r["conclusion"].as_str().unwrap_or(""));
+    let end = if r["status"] == "completed" { &r["updated_at"] } else { &Value::Null };
+    let title = opt(&r["display_title"])
+        .unwrap_or_else(|| r["head_commit"]["message"].as_str().unwrap_or("").lines().next().unwrap_or("").into());
+    Run {
+        id: r["id"].as_u64().unwrap_or(0),
+        name: s(&r["name"]),
+        title,
+        branch: s(&r["head_branch"]),
+        sha: s(&r["head_sha"]),
+        event: s(&r["event"]),
+        status,
+        created_at: s(&r["created_at"]),
+        duration_s: span(&r["run_started_at"], end, now),
+        web_url: s(&r["html_url"]),
+    }
+}
+
+fn gl_run(r: &Value) -> Run {
+    Run {
+        id: r["id"].as_u64().unwrap_or(0),
+        name: format!("Pipeline #{}", r["iid"].as_u64().unwrap_or(0)),
+        // Die Liste liefert keinen Commit-Titel.
+        title: String::new(),
+        branch: s(&r["ref"]),
+        sha: s(&r["sha"]),
+        event: s(&r["source"]),
+        status: gl_status(r["status"].as_str().unwrap_or("")),
+        created_at: s(&r["created_at"]),
+        // Liste hat weder duration noch started_at; updated_at-created_at enthielte Wartezeit und spaete Retries.
+        duration_s: None,
+        web_url: s(&r["web_url"]),
+    }
+}
+
+fn gh_job(j: &Value, now: i64) -> Job {
+    Job {
+        id: j["id"].as_u64().unwrap_or(0),
+        name: s(&j["name"]),
+        stage: None,
+        status: gh_status(j["status"].as_str().unwrap_or(""), j["conclusion"].as_str().unwrap_or("")),
+        started_at: opt(&j["started_at"]),
+        duration_s: if j["status"] == "queued" { None } else { span(&j["started_at"], &j["completed_at"], now) },
+        web_url: s(&j["html_url"]),
+    }
+}
+
+fn gl_job(j: &Value) -> Job {
+    Job {
+        id: j["id"].as_u64().unwrap_or(0),
+        name: s(&j["name"]),
+        stage: opt(&j["stage"]),
+        status: gl_status(j["status"].as_str().unwrap_or("")),
+        started_at: opt(&j["started_at"]),
+        duration_s: j["duration"].as_f64().map(|d| d.max(0.0).round() as u64),
+        web_url: s(&j["web_url"]),
+    }
+}
+
+fn items<T>(v: &Value, f: impl Fn(&Value) -> T) -> Vec<T> {
+    v.as_array().map(|l| l.iter().map(f).collect()).unwrap_or_default()
+}
+
+fn page_qs(page: u32) -> Vec<(&'static str, String)> {
+    vec![("per_page", "30".into()), ("page", page.max(1).to_string())]
+}
+
+/// Die ID landet im URL-Pfad: GitHub nur Ziffern, GitLab-Tag kodiert. Sonst ginge "../" an eine andere API-Route.
+fn release_path(repo: &Repo, id: &str) -> Result<String, String> {
+    if !repo.github() {
+        return Ok(format!("/releases/{}", encode(id)));
+    }
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(format!("Ungültige Release-ID: {id}"));
+    }
+    Ok(format!("/releases/{id}"))
+}
+
+#[tauri::command]
+pub async fn forge_releases(remote_url: String, page: u32) -> Result<Option<ForgeList<Release>>, String> {
+    let Some(repo) = resolve(&remote_url)? else {
+        return Ok(None);
+    };
+    let body = repo.get("/releases", &page_qs(page)).await?;
+    let items = if repo.github() { items(&body, gh_release) } else { items(&body, gl_release) };
+    Ok(Some(ForgeList { kind: repo.kind, items }))
+}
+
+#[tauri::command]
+pub async fn forge_release_save(remote_url: String, id: Option<String>, input: ReleaseInput) -> Result<Release, String> {
+    use reqwest::Method;
+    let repo = require(&remote_url)?;
+    let target = input.target.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    if repo.github() {
+        let mut body = serde_json::json!({
+            "tag_name": input.tag,
+            "name": input.name,
+            "body": input.body,
+            "draft": input.draft,
+            "prerelease": input.prerelease,
+        });
+        if let Some(t) = target {
+            body["target_commitish"] = t.into();
+        }
+        let r = match id {
+            None => repo.call(Method::POST, "/releases", &[], Some(&body)).await?,
+            Some(id) => repo.call(Method::PATCH, &release_path(&repo, &id)?, &[], Some(&body)).await?,
+        };
+        return Ok(gh_release(&r));
+    }
+    let r = match id {
+        None => {
+            let mut body = serde_json::json!({ "tag_name": input.tag, "name": input.name, "description": input.body });
+            if let Some(t) = target {
+                body["ref"] = t.into();
+            }
+            repo.call(Method::POST, "/releases", &[], Some(&body)).await?
+        }
+        Some(tag) => {
+            if input.tag != tag {
+                return Err("GitLab kann den Tag eines Releases nicht ändern. Release löschen und neu anlegen.".into());
+            }
+            let body = serde_json::json!({ "name": input.name, "description": input.body });
+            repo.call(Method::PUT, &release_path(&repo, &tag)?, &[], Some(&body)).await?
+        }
+    };
+    Ok(gl_release(&r))
+}
+
+#[tauri::command]
+pub async fn forge_release_delete(remote_url: String, id: String) -> Result<(), String> {
+    let repo = require(&remote_url)?;
+    repo.call(reqwest::Method::DELETE, &release_path(&repo, &id)?, &[], None).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn forge_runs(remote_url: String, branch: String, page: u32) -> Result<Option<ForgeList<Run>>, String> {
+    let Some(repo) = resolve(&remote_url)? else {
+        return Ok(None);
+    };
+    let mut qs = page_qs(page);
+    let branch = branch.trim().to_string();
+    if repo.github() {
+        if !branch.is_empty() {
+            qs.push(("branch", branch));
+        }
+        let body = repo.get("/actions/runs", &qs).await?;
+        let now = now_secs();
+        let items = items(&body["workflow_runs"], |r| gh_run(r, now));
+        return Ok(Some(ForgeList { kind: repo.kind, items }));
+    }
+    if !branch.is_empty() {
+        qs.push(("ref", branch));
+    }
+    let body = repo.get("/pipelines", &qs).await?;
+    Ok(Some(ForgeList { kind: repo.kind, items: items(&body, gl_run) }))
+}
+
+#[tauri::command]
+pub async fn forge_jobs(remote_url: String, run_id: u64) -> Result<Vec<Job>, String> {
+    let repo = require(&remote_url)?;
+    let qs = [("per_page", "100".to_string())];
+    if repo.github() {
+        let body = repo.get(&format!("/actions/runs/{run_id}/jobs"), &qs).await?;
+        let now = now_secs();
+        return Ok(items(&body["jobs"], |j| gh_job(j, now)));
+    }
+    let body = repo.get(&format!("/pipelines/{run_id}/jobs"), &qs).await?;
+    Ok(items(&body, gl_job))
 }
 
 /// "Receiving objects:  45% (45/100)" -> 45.
@@ -485,6 +881,7 @@ pub fn open_url(url: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn p(u: &str) -> Option<(String, String)> {
         parse_remote(u)
@@ -571,6 +968,107 @@ mod tests {
         assert_eq!(e, "github.com antwortet mit 404 Not Found");
         let e = api_error("github.com", S::UNPROCESSABLE_ENTITY, &serde_json::json!({"message": "Validation Failed"}));
         assert!(e.ends_with("Validation Failed"), "{e}");
+    }
+
+    #[test]
+    fn parst_zeitstempel() {
+        assert_eq!(unix_secs("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(unix_secs("2024-02-29T12:00:00Z"), Some(1709208000));
+        assert_eq!(unix_secs("2024-02-29T12:00:00.123Z"), Some(1709208000));
+        assert_eq!(unix_secs("2024-02-29T14:00:00.5+02:00"), Some(1709208000));
+        assert_eq!(unix_secs("2024-02-29T07:30:00-04:30"), Some(1709208000));
+        assert_eq!(unix_secs("kaputt"), None);
+        assert_eq!(unix_secs("2024-02-29T12:00:00X"), None);
+        let (a, b) = (json!("2024-01-01T00:00:00Z"), json!("2024-01-01T00:01:30Z"));
+        assert_eq!(span(&a, &b, 0), Some(90));
+        assert_eq!(span(&a, &Value::Null, 1704067210), Some(10));
+        assert_eq!(span(&Value::Null, &b, 0), None);
+    }
+
+    #[test]
+    fn mappt_status() {
+        assert_eq!(gh_status("queued", ""), "queued");
+        assert_eq!(gh_status("waiting", ""), "skipped");
+        assert_eq!(gh_status("pending", ""), "queued");
+        assert_eq!(gh_status("in_progress", ""), "running");
+        assert_eq!(gh_status("completed", "success"), "success");
+        assert_eq!(gh_status("completed", "timed_out"), "failure");
+        assert_eq!(gh_status("completed", "action_required"), "failure");
+        assert_eq!(gh_status("completed", "cancelled"), "cancelled");
+        assert_eq!(gh_status("completed", "neutral"), "skipped");
+        assert_eq!(gl_status("manual"), "skipped");
+        assert_eq!(gl_status("scheduled"), "skipped");
+        assert_eq!(gl_status("pending"), "queued");
+        assert_eq!(gl_status("waiting_for_resource"), "queued");
+        assert_eq!(gl_status("running"), "running");
+        assert_eq!(gl_status("failed"), "failure");
+        assert_eq!(gl_status("canceled"), "cancelled");
+        assert_eq!(gl_status("skipped"), "skipped");
+    }
+
+    #[test]
+    fn mappt_releases() {
+        let r = gh_release(&json!({
+            "id": 42, "tag_name": "v1.0", "name": "Eins", "body": "<script>x</script>",
+            "draft": true, "prerelease": false, "created_at": "2024-01-01T00:00:00Z", "published_at": null,
+            "author": {"login": "octo"}, "html_url": "https://github.com/o/r/releases/tag/v1.0",
+            "assets": [{"name": "a.zip", "size": 10, "download_count": 3, "browser_download_url": "https://x/a.zip"}]
+        }));
+        assert_eq!((r.id.as_str(), r.tag.as_str(), r.author.as_str()), ("42", "v1.0", "octo"));
+        assert!(r.draft && r.published_at.is_none());
+        assert_eq!(r.body, "<script>x</script>");
+        assert_eq!(r.assets, vec![ReleaseAsset { name: "a.zip".into(), size: 10, downloads: 3, url: "https://x/a.zip".into() }]);
+
+        let r = gl_release(&json!({
+            "tag_name": "v2", "name": "Zwei", "description": "Notes", "created_at": "c", "released_at": "r",
+            "author": {"username": "gl"}, "_links": {"self": "https://gitlab.com/g/p/-/releases/v2"},
+            "assets": {"links": [{"name": "bin", "url": "https://x/bin"}]}
+        }));
+        assert_eq!((r.id.as_str(), r.tag.as_str(), r.body.as_str()), ("v2", "v2", "Notes"));
+        assert_eq!(r.published_at.as_deref(), Some("r"));
+        assert_eq!(r.web_url, "https://gitlab.com/g/p/-/releases/v2");
+        assert_eq!(r.assets[0].url, "https://x/bin");
+        assert!(!r.draft && !r.prerelease);
+    }
+
+    #[test]
+    fn mappt_runs_und_jobs() {
+        let run = json!({
+            "id": 7, "name": "CI", "display_title": "", "head_commit": {"message": "Fix\n\nDetails"},
+            "head_branch": "main", "head_sha": "abc", "event": "push", "status": "completed", "conclusion": "failure",
+            "created_at": "2024-01-01T00:00:00Z", "run_started_at": "2024-01-01T00:00:10Z",
+            "updated_at": "2024-01-01T00:01:10Z", "html_url": "https://github.com/o/r/actions/runs/7"
+        });
+        let r = gh_run(&run, 0);
+        assert_eq!((r.id, r.title.as_str(), r.status, r.duration_s), (7, "Fix", "failure", Some(60)));
+        let mut laufend = run.clone();
+        laufend["status"] = json!("in_progress");
+        laufend["display_title"] = json!("Titel");
+        let r = gh_run(&laufend, unix_secs("2024-01-01T00:00:40Z").unwrap());
+        assert_eq!((r.title.as_str(), r.status, r.duration_s), ("Titel", "running", Some(30)));
+
+        let pl = json!({"id": 99, "iid": 5, "ref": "main", "sha": "def", "source": "push", "status": "success",
+            "created_at": "2024-01-01T00:00:00Z", "updated_at": "2024-01-01T00:02:00Z", "web_url": "https://gl/p/99"});
+        let r = gl_run(&pl);
+        assert_eq!((r.name.as_str(), r.event.as_str(), r.status, r.duration_s), ("Pipeline #5", "push", "success", None));
+
+        let j = gh_job(&json!({"id": 1, "name": "build", "status": "completed", "conclusion": "success",
+            "started_at": "2024-01-01T00:00:00Z", "completed_at": "2024-01-01T00:00:05Z", "html_url": "u"}), 0);
+        assert_eq!((j.stage, j.status, j.duration_s), (None, "success", Some(5)));
+        let j = gh_job(&json!({"id": 2, "status": "queued", "started_at": "2024-01-01T00:00:00Z"}), 99);
+        assert_eq!(j.duration_s, None);
+        let j = gl_job(&json!({"id": 3, "name": "test", "stage": "test", "status": "failed",
+            "started_at": "s", "duration": 12.6, "web_url": "u"}));
+        assert_eq!((j.stage.as_deref(), j.status, j.duration_s), (Some("test"), "failure", Some(13)));
+    }
+
+    #[test]
+    fn release_id_landet_sicher_im_pfad() {
+        let repo = |kind| Repo { kind, host: "h".into(), base: String::new(), tok: String::new() };
+        assert_eq!(release_path(&repo("github"), "123").unwrap(), "/releases/123");
+        assert!(release_path(&repo("github"), "../../user").is_err());
+        assert!(release_path(&repo("github"), "").is_err());
+        assert_eq!(release_path(&repo("gitlab"), "v1.0/../x").unwrap(), "/releases/v1.0%2F..%2Fx");
     }
 
     fn tmp(name: &str) -> std::path::PathBuf {

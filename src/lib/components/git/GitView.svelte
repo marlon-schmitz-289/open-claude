@@ -5,10 +5,12 @@
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
-  import { git, type Status } from "$lib/git";
+  import { git, type ForgeKind, type Status } from "$lib/git";
   import Sidebar from "./Sidebar.svelte";
   import ChangesPanel from "./ChangesPanel.svelte";
   import HistoryPanel from "./HistoryPanel.svelte";
+  import ReleasesPanel from "./ReleasesPanel.svelte";
+  import PipelinesPanel from "./PipelinesPanel.svelte";
   import MergeEditor from "./MergeEditor.svelte";
   import DiffView from "./DiffView.svelte";
   import Splitter, { stored } from "$lib/components/Splitter.svelte";
@@ -25,8 +27,16 @@
 
   let status = $state<Status | null>(null);
   let refreshKey = $state(0);
+  // Forge-Panels kosten API-Calls: nur nachziehen, wenn sich HEAD/Branch bewegt oder das Remote angefasst wurde.
+  let forgeKey = $state(0);
   let side = $state(stored("git.side", 240));
-  let tab = $state<"changes" | "history">("changes");
+  let tab = $state<"changes" | "history" | "releases" | "ci">("changes");
+  // Forge-Tabs erst beim ersten Oeffnen mounten: sonst API-Calls, obwohl nie hingeschaut wird.
+  let seen = $state({ releases: false, ci: false });
+  let ciKind = $state<ForgeKind | null>(null);
+  $effect(() => {
+    if (tab === "releases" || tab === "ci") seen[tab] = true;
+  });
   let conflictPath = $state<string | null>(null);
   let jumpTo = $state<string | null>(null);
   let busy = $state("");
@@ -41,7 +51,7 @@
   const STATE_LABEL = { merge: "Merge", rebase: "Rebase", "cherry-pick": "Cherry-Pick", revert: "Revert" };
 
   /** Status neu lesen; refreshKey laesst Sidebar und Verlauf nachziehen. Beim Fokus nur, wenn HEAD sich bewegt hat. */
-  async function refresh(force = true) {
+  async function refresh(force = true, remote = false) {
     const before = `${status?.head}|${status?.branch}`;
     try {
       status = await git.status(repo);
@@ -50,13 +60,15 @@
     } catch (e) {
       error = `Status: ${e}`;
     }
-    if (force || before !== `${status?.head}|${status?.branch}`) refreshKey++;
+    const moved = before !== `${status?.head}|${status?.branch}`;
+    if (force || moved) refreshKey++;
+    if (remote || moved) forgeKey++;
   }
 
   /** Fuer den Aktualisieren-Knopf in der Titelleiste und F5; alte Meldungen gelten dann nicht mehr. */
   export const reload = () => {
     error = note = "";
-    return refresh();
+    return refresh(true, true);
   };
 
   let mergeDirty = $state(false);
@@ -83,7 +95,7 @@
       error = String(e);
     }
     busy = "";
-    await refresh();
+    await refresh(true, ["Fetch", "Pull", "Push", "Force-Push"].includes(label));
   }
 
   const doFetch = () => run("Fetch", () => git.fetch(repo));
@@ -130,6 +142,8 @@
     const k = e.key.toLowerCase();
     if (ctrl && !e.shiftKey && e.key === "1") tab = "changes";
     else if (ctrl && !e.shiftKey && e.key === "2") tab = "history";
+    else if (ctrl && !e.shiftKey && e.key === "3") tab = "releases";
+    else if (ctrl && !e.shiftKey && e.key === "4") tab = "ci";
     else if (ctrl && e.shiftKey && k === "f") doFetch();
     else if (ctrl && e.shiftKey && k === "p") push();
     else if (ctrl && e.shiftKey && k === "l") pull();
@@ -250,7 +264,7 @@
           />
         {:else}
           <div class="border-border flex gap-1 border-b px-2">
-            {#each [["changes", "Änderungen", "Strg+1"], ["history", "Verlauf", "Strg+2"]] as [id, label, key] (id)}
+            {#each [["changes", "Änderungen", "Strg+1"], ["history", "Verlauf", "Strg+2"], ["releases", "Releases", "Strg+3"], ["ci", ciKind === "gitlab" ? "Pipelines" : ciKind === "github" ? "Actions" : "CI", "Strg+4"]] as [id, label, key] (id)}
               <button
                 class="-mb-px border-b-2 px-2 py-1.5 {tab === id
                   ? 'border-primary text-foreground'
@@ -265,13 +279,23 @@
             {/each}
           </div>
           <div class="min-h-0 flex-1">
-            <!-- Beide bleiben gemountet: Auswahl und Scrollstand ueberleben den Tabwechsel. -->
+            <!-- Einmal geoeffnet bleiben alle gemountet: Auswahl und Scrollstand ueberleben den Tabwechsel. -->
             <div class="h-full {tab === 'changes' ? '' : 'hidden'}">
               <ChangesPanel {repo} {status} onchange={refresh} onconflict={(p) => (conflictPath = p)} />
             </div>
             <div class="h-full {tab === 'history' ? '' : 'hidden'}">
               <HistoryPanel {repo} {jumpTo} {refreshKey} onchange={refresh} />
             </div>
+            {#if seen.releases}
+              <div class="h-full {tab === 'releases' ? '' : 'hidden'}">
+                <ReleasesPanel {repo} refreshKey={forgeKey} />
+              </div>
+            {/if}
+            {#if seen.ci}
+              <div class="h-full {tab === 'ci' ? '' : 'hidden'}">
+                <PipelinesPanel {repo} refreshKey={forgeKey} visible={tab === "ci"} bind:kind={ciKind} />
+              </div>
+            {/if}
           </div>
         {/if}
       </div>
