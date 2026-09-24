@@ -31,6 +31,7 @@ ctrlc = "3"
 # native-tls = SChannel: nutzt den Windows-Zertifikatsspeicher (Firmen-Root-CA hinter Proxy)
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "query", "native-tls", "charset", "http2", "system-proxy"] }
 base64 = "0.23.1"
+trash = "5.2.9"
 
 # keyring ohne Plattform-Feature haelt den Token nur im RAM, darum je Ziel ein echter Speicher
 [target.'cfg(windows)'.dependencies]

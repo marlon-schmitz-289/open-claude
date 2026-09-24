@@ -28,7 +28,8 @@
   import XIcon from "@lucide/svelte/icons/x";
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
   import SettingsIcon from "@lucide/svelte/icons/settings";
-  import { DropdownMenu } from "bits-ui";
+  import { ContextMenu, DropdownMenu } from "bits-ui";
+  import Notice from "$lib/components/Notice.svelte";
   import TerminalIcon from "@lucide/svelte/icons/terminal";
   import FolderOpenIcon from "@lucide/svelte/icons/folder-open";
   import { fuzzy } from "$lib/fuzzy";
@@ -37,7 +38,7 @@
   import GitView from "$lib/components/git/GitView.svelte";
   import CloneDialog from "$lib/components/git/CloneDialog.svelte";
   import AccountsDialog from "$lib/components/git/AccountsDialog.svelte";
-  import { git, type Account } from "$lib/git";
+  import { git, forge, type Account } from "$lib/git";
   import DownloadIcon from "@lucide/svelte/icons/download";
   import UsersIcon from "@lucide/svelte/icons/users";
 
@@ -329,6 +330,68 @@
     }
   }
 
+  // Fehler aus dem Kontextmenue als Leiste, error wuerde die ganze Liste ersetzen.
+  let notice = $state("");
+
+  async function browse(repo: Repo) {
+    try {
+      const remotes = await git.remotes(repo.path);
+      const r = remotes.find((r) => r.name === "origin") ?? remotes[0];
+      const url = r && (await forge.webUrl(r.url));
+      if (!url) throw "Kein Remote mit Web-Adresse.";
+      await forge.openUrl(url);
+    } catch (e) {
+      notice = String(e);
+    }
+  }
+
+  // Loeschen: vorher zeigen, was nur auf diesem Rechner liegt.
+  let doomed = $state<{ repo: Repo; risks: string[] } | null>(null);
+  let trashing = $state(false);
+
+  async function askTrash(repo: Repo) {
+    const risks: string[] = [];
+    try {
+      const [st, branches, stashes, remotes] = await Promise.all([
+        git.status(repo.path),
+        git.branches(repo.path),
+        git.stashes(repo.path),
+        git.remotes(repo.path),
+      ]);
+      const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+      if (!remotes.length) risks.push("Kein Remote: alles liegt nur hier.");
+      if (st.files.length) risks.push(n(st.files.length, "nicht committete Änderung", "nicht committete Änderungen"));
+      // Nie gepushte Branches zaehlen nur, wenn sie nicht schon in der Basis stecken.
+      const unpushed = branches.filter((b) => !b.remote && (b.ahead > 0 || (!b.upstream && b.unmerged !== 0)));
+      if (remotes.length && unpushed.length)
+        risks.push(`Nicht gepusht: ${unpushed.map((b) => b.name + (b.ahead ? ` (+${b.ahead})` : "")).join(", ")}`);
+      if (stashes.length) risks.push(n(stashes.length, "Stash", "Stashes"));
+    } catch (e) {
+      risks.push(`Status unbekannt: ${e}`);
+    }
+    doomed = { repo, risks };
+  }
+
+  async function trashRepo() {
+    if (!doomed) return;
+    const { repo } = doomed;
+    trashing = true;
+    try {
+      // Laufende Sitzung zuerst beenden, unter Windows sperrt ihr cwd sonst den Ordner.
+      sessions = sessions.filter((s) => s.repo.path !== repo.path);
+      await tick();
+      await invoke("trash_repo", { path: repo.path, root });
+      repos = repos.filter((r) => r.path !== repo.path);
+      if (pins.includes(repo.path)) await togglePin(repo.path);
+      await store.set("cache", { root, repos, at: scannedAt } satisfies Cache);
+      doomed = null;
+    } catch (e) {
+      notice = String(e);
+      doomed = null;
+    }
+    trashing = false;
+  }
+
   async function back() {
     if (gitRepo && gitView && !gitView.canLeave()) return;
     active = null;
@@ -396,7 +459,7 @@
       return;
     }
     // Offene Dialoge (Hilfe, Klonen, Konten) bekommen ihre Tasten selbst.
-    if (help || cloneOpen || accountsOpen || setup) return;
+    if (help || cloneOpen || accountsOpen || setup || doomed) return;
 
     if (ctrl && e.key >= "1" && e.key <= "9") {
       launch(flat[Number(e.key) - 1]?.repo);
@@ -677,6 +740,7 @@
       </div>
     </div>
 
+    <Notice bind:text={notice} />
     <Command.List class="max-h-none flex-1 overflow-y-auto">
       {#if error}
         <p class="text-destructive px-4 py-6 text-sm">{error}</p>
@@ -690,84 +754,107 @@
           <Command.Group heading={group.heading || undefined}>
             {#each group.items as item (item.repo.path)}
               {@const nr = flat.indexOf(item) + 1}
-              <Command.Item
-                value={item.repo.path}
-                onSelect={() => (withCtrl ? launch(item.repo) : openGit(item.repo))}
-                class="gap-3 px-3 py-2"
-              >
-                {@const pinned = pins.includes(item.repo.path)}
-                <button
-                  class="text-muted-foreground hover:text-primary -m-1 grid size-6 place-items-center rounded p-1 {pinned
-                    ? 'text-primary'
-                    : 'opacity-50'}"
-                  onpointerdown={(e) => e.stopPropagation()}
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    togglePin(item.repo.path);
-                  }}
-                  aria-label={pinned ? "Nicht mehr anpinnen" : "Anpinnen"}
-                  aria-pressed={pinned}
-                >
-                  <StarIcon class="size-4 {pinned ? 'fill-current' : ''}" />
-                </button>
-
-                <div class="min-w-0 flex-1">
-                  <div class="truncate text-sm font-semibold">
-                    {#each item.name.split("") as ch, i}<span
-                        class={item.marks.includes(i) ? "text-primary" : ""}>{ch}</span
-                      >{/each}
-                  </div>
-                  {#if item.dir}
-                    <div class="text-muted-foreground truncate font-mono text-[11px]">
-                      {item.dir}
-                    </div>
-                  {/if}
-                </div>
-
-                {#if running.has(item.repo.path)}
-                  <Badge variant="outline" class="text-primary gap-1.5 pr-0.5 text-[11px]">
-                    <span class="size-2 animate-pulse rounded-full bg-current"></span>
-                    läuft
-                    <button
-                      class="text-muted-foreground hover:bg-destructive/20 hover:text-destructive grid size-4 place-items-center rounded"
-                      onpointerdown={(e) => e.stopPropagation()}
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        const s = sessions.find((s) => s.repo.path === item.repo.path);
-                        if (s) endSession(s.id);
-                      }}
-                      aria-label="Sitzung beenden"
-                      title="Sitzung beenden"><XIcon class="size-3" /></button
+              {@const pinned = pins.includes(item.repo.path)}
+              <!-- Rechtsklick waehlt die Zeile mit aus, damit klar ist, wofuer das Menue gilt -->
+              <ContextMenu.Root onOpenChange={(o) => o && (selected = item.repo.path)}>
+                <ContextMenu.Trigger>
+                  {#snippet child({ props })}
+                    <Command.Item
+                      {...props}
+                      value={item.repo.path}
+                      onSelect={() => (withCtrl ? launch(item.repo) : openGit(item.repo))}
+                      class="gap-3 px-3 py-2"
                     >
-                  </Badge>
-                {/if}
+                      <button
+                        class="text-muted-foreground hover:text-primary -m-1 grid size-6 place-items-center rounded p-1 {pinned
+                          ? 'text-primary'
+                          : 'opacity-50'}"
+                        onpointerdown={(e) => e.stopPropagation()}
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          togglePin(item.repo.path);
+                        }}
+                        aria-label={pinned ? "Nicht mehr anpinnen" : "Anpinnen"}
+                        aria-pressed={pinned}
+                      >
+                        <StarIcon class="size-4 {pinned ? 'fill-current' : ''}" />
+                      </button>
 
-                {#each item.repo.langs ?? [] as lang (lang)}
-                  <Badge variant="outline" class="text-muted-foreground gap-1.5 text-[11px]">
-                    <span
-                      class="size-2 rounded-full"
-                      style="background:{LANG_COLOR[lang] ?? 'var(--muted-foreground)'}"
-                    ></span>
-                    {lang}
-                  </Badge>
-                {/each}
+                      <div class="min-w-0 flex-1">
+                        <div class="truncate text-sm font-semibold">
+                          {#each item.name.split("") as ch, i}<span
+                              class={item.marks.includes(i) ? "text-primary" : ""}>{ch}</span
+                            >{/each}
+                        </div>
+                        {#if item.dir}
+                          <div class="text-muted-foreground truncate font-mono text-[11px]">
+                            {item.dir}
+                          </div>
+                        {/if}
+                      </div>
 
-                <Badge variant="outline" class="text-muted-foreground gap-1 font-mono text-[11px]">
-                  <GitBranchIcon class="size-3" />
-                  {item.repo.branch}
-                </Badge>
-                <span class="text-muted-foreground w-12 text-right font-mono text-[11px] tabular-nums">
-                  {age(item.repo.last_commit)}
-                </span>
-                {#if nr <= 9}
-                  <kbd
-                    class="text-muted-foreground border-border hidden w-10 rounded border px-1 py-0.5 text-center font-mono text-[10px] sm:block"
-                    >^{nr}</kbd
+                      {#if running.has(item.repo.path)}
+                        <Badge variant="outline" class="text-primary gap-1.5 pr-0.5 text-[11px]">
+                          <span class="size-2 animate-pulse rounded-full bg-current"></span>
+                          läuft
+                          <button
+                            class="text-muted-foreground hover:bg-destructive/20 hover:text-destructive grid size-4 place-items-center rounded"
+                            onpointerdown={(e) => e.stopPropagation()}
+                            onclick={(e) => {
+                              e.stopPropagation();
+                              const s = sessions.find((s) => s.repo.path === item.repo.path);
+                              if (s) endSession(s.id);
+                            }}
+                            aria-label="Sitzung beenden"
+                            title="Sitzung beenden"><XIcon class="size-3" /></button
+                          >
+                        </Badge>
+                      {/if}
+
+                      {#each item.repo.langs ?? [] as lang (lang)}
+                        <Badge variant="outline" class="text-muted-foreground gap-1.5 text-[11px]">
+                          <span
+                            class="size-2 rounded-full"
+                            style="background:{LANG_COLOR[lang] ?? 'var(--muted-foreground)'}"
+                          ></span>
+                          {lang}
+                        </Badge>
+                      {/each}
+
+                      <Badge variant="outline" class="text-muted-foreground gap-1 font-mono text-[11px]">
+                        <GitBranchIcon class="size-3" />
+                        {item.repo.branch}
+                      </Badge>
+                      <span class="text-muted-foreground w-12 text-right font-mono text-[11px] tabular-nums">
+                        {age(item.repo.last_commit)}
+                      </span>
+                      {#if nr <= 9}
+                        <kbd
+                          class="text-muted-foreground border-border hidden w-10 rounded border px-1 py-0.5 text-center font-mono text-[10px] sm:block"
+                          >^{nr}</kbd
+                        >
+                      {:else}
+                        <span class="hidden w-10 sm:block"></span>
+                      {/if}
+                    </Command.Item>
+                  {/snippet}
+                </ContextMenu.Trigger>
+                <ContextMenu.Portal>
+                  <ContextMenu.Content
+                    class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-52 rounded-lg p-1 text-xs shadow-lg ring-1"
                   >
-                {:else}
-                  <span class="hidden w-10 sm:block"></span>
-                {/if}
-              </Command.Item>
+                    {@render repoItem("Git-Ansicht", "Strg+G", () => openGit(item.repo))}
+                    {@render repoItem(running.has(item.repo.path) ? "Zur Claude-Sitzung" : "Claude starten", "Strg+⏎", () => launch(item.repo))}
+                    <ContextMenu.Separator class="bg-border my-1 h-px" />
+                    {@render repoItem(mac ? "Im Finder zeigen" : "Im Explorer zeigen", "Strg+E", () => reveal(item.repo))}
+                    {@render repoItem("Im Browser öffnen", "", () => browse(item.repo))}
+                    {@render repoItem("Pfad kopieren", "", () => navigator.clipboard.writeText(item.repo.path))}
+                    {@render repoItem(pinned ? "Nicht mehr anpinnen" : "Anpinnen", "Strg+P", () => togglePin(item.repo.path))}
+                    <ContextMenu.Separator class="bg-border my-1 h-px" />
+                    {@render repoItem("Vom Gerät löschen …", "", () => askTrash(item.repo), true)}
+                  </ContextMenu.Content>
+                </ContextMenu.Portal>
+              </ContextMenu.Root>
             {/each}
           </Command.Group>
         {/each}
@@ -817,6 +904,18 @@
     </button>
   </footer>
 </div>
+
+{#snippet repoItem(label: string, key: string, onSelect: () => void, destructive = false)}
+  <ContextMenu.Item
+    class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 {destructive
+      ? 'text-destructive'
+      : ''}"
+    {onSelect}
+  >
+    <span class="flex-1">{label}</span>
+    {#if key}<kbd class="text-muted-foreground font-mono text-[10px]">{key}</kbd>{/if}
+  </ContextMenu.Item>
+{/snippet}
 
 {#snippet kbd(key: string)}
   <kbd class="bg-secondary text-foreground/80 rounded px-1.5 py-px font-mono text-[10px]">{key}</kbd>
@@ -874,6 +973,7 @@
         ["Strg + E", "Ordner im Explorer öffnen"],
         ["Strg + R", "Neu einlesen"],
         ["Strg + O", "Dev-Ordner wechseln"],
+        ["Rechtsklick", "Weitere Aktionen, z. B. vom Gerät löschen"],
         ["Esc", "Suche leeren, sonst schließen (bzw. ins Tray)"],
       ])}
       <div class="grid content-start gap-6">
@@ -926,6 +1026,29 @@
     </div>
     <div class="flex justify-end">
       <Button onclick={finishSetup} disabled={!root.trim()}>Übernehmen</Button>
+    </div>
+  </Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root open={doomed !== null} onOpenChange={(o) => !o && !trashing && (doomed = null)}>
+  <Dialog.Content class="sm:max-w-md">
+    <Dialog.Header>
+      <Dialog.Title>„{doomed && split(doomed.repo.rel)[1]}“ vom Gerät löschen?</Dialog.Title>
+      <Dialog.Description>
+        Der Ordner wandert in den Papierkorb, auf dem Server bleibt alles. Eine laufende Claude-Sitzung wird beendet.
+      </Dialog.Description>
+    </Dialog.Header>
+    <p class="text-muted-foreground truncate font-mono text-[11px]" title={doomed?.repo.path}>{doomed?.repo.path}</p>
+    {#if doomed?.risks.length}
+      <ul class="bg-destructive/10 text-destructive list-disc rounded-md py-2 pr-3 pl-7 text-xs">
+        {#each doomed.risks as r (r)}<li>{r}</li>{/each}
+      </ul>
+    {/if}
+    <div class="flex justify-end gap-2">
+      <Button variant="ghost" size="sm" disabled={trashing} onclick={() => (doomed = null)}>Abbrechen</Button>
+      <Button variant="destructive" size="sm" disabled={trashing} onclick={trashRepo}>
+        {trashing ? "Lösche …" : "In den Papierkorb"}
+      </Button>
     </div>
   </Dialog.Content>
 </Dialog.Root>

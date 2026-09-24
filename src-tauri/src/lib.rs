@@ -286,6 +286,30 @@ fn reveal(path: String) -> Result<(), String> {
         .map_err(|e| format!("Explorer konnte nicht geoeffnet werden: {e}"))
 }
 
+/// Nur Git-Repos echt unterhalb des Dev-Ordners, nie den Dev-Ordner selbst.
+fn trashable(path: &str, root: &str) -> Result<PathBuf, String> {
+    let dir = Path::new(path).canonicalize().map_err(|e| format!("Ordner nicht gefunden: {e}"))?;
+    let root = Path::new(root).canonicalize().map_err(|e| format!("Dev-Ordner nicht gefunden: {e}"))?;
+    if dir == root || !dir.starts_with(&root) {
+        return Err(format!("Liegt nicht im Dev-Ordner: {path}"));
+    }
+    if !dir.join(".git").exists() {
+        return Err(format!("Kein Git-Repo: {path}"));
+    }
+    Ok(dir)
+}
+
+/// Verschiebt das Repo in den Papierkorb, damit ein Fehlklick wiederherstellbar bleibt.
+#[tauri::command]
+async fn trash_repo(path: String, root: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = trashable(&path, &root)?;
+        trash::delete(&dir).map_err(|e| format!("Löschen fehlgeschlagen: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Oeffnet Ordner oder URL mit dem Standardprogramm (Explorer, Finder, xdg-open).
 pub(crate) fn open_system(target: impl AsRef<std::ffi::OsStr>) -> std::io::Result<()> {
     let prog = if cfg!(windows) {
@@ -398,6 +422,7 @@ pub fn run() {
             default_root,
             scan,
             reveal,
+            trash_repo,
             set_tray,
             pty::pty_open,
             pty::pty_write,
@@ -415,6 +440,7 @@ pub fn run() {
             forge::forge_jobs,
             forge::forge_clone,
             forge::open_url,
+            forge::forge_web_url,
             git::git_status,
             git::git_log,
             git::git_show,
@@ -478,7 +504,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{branch_from_head, langs_in, scan_blocking, strip_appdir, HOOK_VARS};
+    use super::{branch_from_head, langs_in, scan_blocking, strip_appdir, trashable, HOOK_VARS};
 
     const APPDIR: &str = "/tmp/.mount_OpenCl42";
 
@@ -546,6 +572,23 @@ mod tests {
         let mut rels: Vec<String> = repos.iter().map(|r| r.rel.replace('\\', "/")).collect();
         rels.sort();
         assert_eq!(rels, ["a/b/c/d/tief", "flach"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn loescht_nur_repos_im_dev_ordner() {
+        let root = std::env::temp_dir().join(format!("ocui-trash-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("repo/.git")).unwrap();
+        std::fs::create_dir_all(root.join("kein-repo")).unwrap();
+        let r = root.display().to_string();
+        let p = |s: &str| root.join(s).display().to_string();
+        assert!(trashable(&p("repo"), &r).is_ok());
+        assert!(trashable(&p("kein-repo"), &r).is_err());
+        assert!(trashable(&r, &r).is_err());
+        // Ausbruch per ".." aus dem Dev-Ordner.
+        assert!(trashable(&p("repo/../.."), &p("repo")).is_err());
+        assert!(trashable(&p("fehlt"), &r).is_err());
         let _ = std::fs::remove_dir_all(&root);
     }
 

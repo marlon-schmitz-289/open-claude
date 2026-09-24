@@ -276,4 +276,6 @@ export const forge = {
   clone: (id: string, url: string, dest: string) => call<string>("forge_clone", { id, url, dest }),
   /** Oeffnet eine URL im Standardbrowser. */
   openUrl: (url: string) => call<void>("open_url", { url }),
+  /** Browser-URL zu einem Remote (ssh/scp -> https); null, wenn nicht erkennbar. */
+  webUrl: (remoteUrl: string) => call<string | null>("forge_web_url", { remoteUrl }),
 };

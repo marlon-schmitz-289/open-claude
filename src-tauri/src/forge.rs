@@ -878,10 +878,22 @@ pub fn open_url(url: String) -> Result<(), String> {
         .map_err(|e| format!("Browser konnte nicht geöffnet werden: {e}"))
 }
 
+/// Browser-URL zum Remote (ssh/scp-artig -> https); None, wenn nicht parsebar.
+#[tauri::command]
+pub fn forge_web_url(remote_url: String) -> Option<String> {
+    parse_remote(&remote_url).map(|(host, path)| format!("https://{host}/{path}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn web_url_aus_remote() {
+        assert_eq!(forge_web_url("git@github.com:o/r.git".into()).as_deref(), Some("https://github.com/o/r"));
+        assert_eq!(forge_web_url("C:/repos/x".into()), None);
+    }
 
     fn p(u: &str) -> Option<(String, String)> {
         parse_remote(u)
