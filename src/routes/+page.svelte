@@ -6,6 +6,8 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { load, type Store } from "@tauri-apps/plugin-store";
   import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
+  import { check, type Update } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
 
   import * as Command from "$lib/components/ui/command/index.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
@@ -175,6 +177,24 @@
     const off = win.onResized(sync);
     return () => off.then((f) => f());
   });
+
+  // Neue Version aus GitHub-Releases; Fehler (offline, Dev-Build) still ignorieren.
+  let update = $state<Update | null>(null);
+  let updating = $state(false);
+  onMount(() => {
+    check().then((u) => (update = u), () => {});
+  });
+
+  async function installUpdate() {
+    updating = true;
+    try {
+      await update!.downloadAndInstall();
+      await relaunch();
+    } catch (e) {
+      error = String(e);
+      updating = false;
+    }
+  }
 
   onMount(async () => {
     store = await load("settings.json", { autoSave: true });
@@ -487,6 +507,17 @@
     <span class="text-muted-foreground flex-1 text-xs font-semibold" data-tauri-drag-region>
       Open Claude
     </span>
+  {/if}
+  {#if update}
+    <Button
+      variant="ghost"
+      size="sm"
+      class="text-primary mr-1 h-6 gap-1.5 text-[11px]"
+      disabled={updating}
+      onclick={installUpdate}
+      title="Update installieren und neu starten"
+      ><DownloadIcon class="size-3.5" /> {updating ? "Aktualisiere…" : `Update ${update.version}`}</Button
+    >
   {/if}
   {#if !mac}
     <!-- Fensterknoepfe wie bei Windows: nicht per Tab erreichbar, kein Fokusrahmen, Fokus bleibt im Terminal/der Suche. -->

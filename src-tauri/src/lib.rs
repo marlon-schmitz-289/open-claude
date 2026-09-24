@@ -293,8 +293,28 @@ fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Aus Finder/Dock gestartet ist PATH nur /usr/bin:/bin:… — git findet dann weder git-lfs
+/// noch Credential-Helper aus Homebrew & Co. PATH daher einmal aus der Login-Shell holen.
+fn login_path() -> Option<String> {
+    let sh = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let out = quiet(&sh)
+        .args(["-lic", "printf '\\n__PATH__%s__PATH__' \"$PATH\""])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout);
+    let path = s.split("__PATH__").nth(1)?;
+    (!path.is_empty()).then(|| path.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Vor allen Threads, set_var ist nicht threadsicher.
+    if cfg!(unix) {
+        if let Some(path) = login_path() {
+            std::env::set_var("PATH", path);
+        }
+    }
     tauri::Builder::default()
         // Muss als erstes Plugin rein. Zweiter Start (z.B. neben Autostart) holt nur das Fenster vor.
         .plugin(tauri_plugin_single_instance::init(|app, _, _| reopen(app)))
@@ -304,6 +324,8 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(pty::Ptys::default())
         .invoke_handler(tauri::generate_handler![
             default_root,
