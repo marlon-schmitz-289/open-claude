@@ -5,6 +5,7 @@
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
+  import { WebglAddon } from "@xterm/addon-webgl";
   import "@xterm/xterm/css/xterm.css";
   import ClaudeLoader from "./ClaudeLoader.svelte";
 
@@ -116,6 +117,15 @@
     term = t;
     t.loadAddon(fit);
     t.open(el);
+    // Der DOM-Renderer nimmt Block- und Linienzeichen aus der Schrift: Logo mit Luecken,
+    // Trennlinien mit Zacken (Windows). WebGL zeichnet sie selbst, zellfuellend.
+    try {
+      const gl = new WebglAddon();
+      gl.onContextLoss(() => gl.dispose());
+      t.loadAddon(gl);
+    } catch {
+      // Kein WebGL2: DOM-Renderer bleibt.
+    }
     fit.fit();
     t.attachCustomKeyEventHandler(onKeyEvent);
     // ConPTY schickt vorab nur Steuersequenzen; erst sichtbarer Text heisst, claude ist da.
