@@ -91,7 +91,9 @@
       smoothScrollDuration: 90,
       // Palette Richtung Tokyo Night, magenta nah am Primary.
       theme: {
-        background: "#00000000",
+        // --card mit Alpha 0: WebGL malt Zellen mit Attribut (dim, kursiv) deckend in dieser Farbe,
+        // bei #00000000 also schwarz.
+        background: "#181b2100",
         foreground: css.getPropertyValue("--foreground"),
         cursor: css.getPropertyValue("--primary"),
         cursorAccent: "#1a1b26",
@@ -128,6 +130,34 @@
     }
     fit.fit();
     t.attachCustomKeyEventHandler(onKeyEvent);
+    // Trackpad unter macOS: Im Verlauf teilt xterms Scrollable die Deltas und glaettet je nach
+    // Heuristik, fuer Maus-Apps/Alt-Screen drosselt xterm Deltas < 50 px auf 30 %. Langsam wischen
+    // kriecht, schnell rast. Darum selbst: Verlauf 1:1 in Pixeln, sonst gesammelt als 50-px-Events.
+    // Capture auf dem Container, sonst hat xterms Scrollable das Event schon.
+    let wheelPx = 0;
+    if (navigator.userAgent.includes("Mac")) {
+      el.addEventListener(
+        "wheel",
+        (e) => {
+          if (!e.isTrusted || e.ctrlKey || !e.deltaY || e.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) return;
+          e.preventDefault();
+          e.stopPropagation();
+          if (t.modes.mouseTrackingMode === "none" && t.buffer.active.type === "normal") {
+            // scrollLines nimmt Bruchteile, Viewport rechnet in Pixel zurueck.
+            t.scrollLines(e.deltaY / (el.clientHeight / t.rows));
+            return;
+          }
+          wheelPx += e.deltaY;
+          while (Math.abs(wheelPx) >= 50) {
+            const deltaY = Math.sign(wheelPx) * 50;
+            wheelPx -= deltaY;
+            const { clientX, clientY } = e;
+            e.target?.dispatchEvent(new WheelEvent("wheel", { deltaY, clientX, clientY, bubbles: true, cancelable: true }));
+          }
+        },
+        { capture: true, passive: false },
+      );
+    }
     // ConPTY schickt vorab nur Steuersequenzen; erst sichtbarer Text heisst, claude ist da.
     const ready = t.onWriteParsed(() => {
       const b = t.buffer.active;
