@@ -10,6 +10,10 @@ permissions:
   contents: write
 
 jobs:
+  # Tests parallel zum Build statt davor: rot = Run rot, Draft nicht veroeffentlichen.
+  test:
+    uses: ./.github/workflows/ci.yml
+
   build:
     strategy:
       fail-fast: false
@@ -51,22 +55,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.name == 'macos-aarch64' && 'aarch64-apple-darwin' || matrix.name == 'macos-x86_64' && 'x86_64-apple-darwin' || '' }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      # Tests vor dem Build; macOS x86_64 laeuft auf demselben Runner wie aarch64, einmal reicht
-      - name: Tests
-        if: matrix.name != 'macos-x86_64'
-        shell: bash
-        run: |
-          git config --global user.name "CI"
-          git config --global user.email "ci@example.com"
-          npm run check
-          node --test src/lib/*.test.ts
-          cd src-tauri
-          cargo clippy --all-targets -- -D warnings
-          cargo test
+      # Kein rust-cache: Caches gelten nur fuer den eigenen Ref, ein Tag sieht die vom letzten Tag nie.
 
       # Changelog: Stichpunkte der feat/fix-Commits seit dem letzten Tag
       - name: Changelog

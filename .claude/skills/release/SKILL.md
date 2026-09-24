@@ -77,7 +77,7 @@ Body = die `- `-Stichpunkte der feat/fix-Commits seit dem letzten Tag, ohne `- V
 
 ## 5. Run überwachen
 
-Push auf `master` startet **keine** CI mehr, nur der Tag startet `Release` (`.github/workflows/release.yml`, ~10 min, 4 Jobs: windows, macos-aarch64, macos-x86_64, linux). Im Hintergrund warten:
+Push auf `master` startet **keine** CI mehr, nur der Tag startet `Release` (`.github/workflows/release.yml`, 4 Build-Jobs: windows, macos-aarch64, macos-x86_64, linux; parallel dazu `test` = `ci.yml` auf 3 OS). Im Hintergrund warten:
 
 ```sh
 id=$(gh run list -w release.yml -L 1 --json databaseId -q '.[0].databaseId')
