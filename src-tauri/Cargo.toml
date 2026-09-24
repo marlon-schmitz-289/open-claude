@@ -1,6 +1,6 @@
 [package]
 name = "ocui"
-version = "1.0.7"
+version = "1.0.8"
 description = "Projekt-Launcher fuer Claude Code"
 authors = ["Marlon Schmitz"]
 edition = "2021"
