@@ -21,6 +21,8 @@
   import StarIcon from "@lucide/svelte/icons/star";
   import PowerIcon from "@lucide/svelte/icons/power";
   import InboxIcon from "@lucide/svelte/icons/inbox";
+  import GhostIcon from "@lucide/svelte/icons/ghost";
+  import VolumeIcon from "@lucide/svelte/icons/volume-2";
   import MinusIcon from "@lucide/svelte/icons/minus";
   import SquareIcon from "@lucide/svelte/icons/square";
   import XIcon from "@lucide/svelte/icons/x";
@@ -79,6 +81,9 @@
   let pins = $state<string[]>([]);
   let autostart = $state(false);
   let tray = $state(true);
+  // Among-Us-Easteregg: rate ist der Faktor auf die Wartezeiten (groesser = seltener).
+  let amongUs = $state({ on: true, rate: 1, volume: 1 });
+  const RATES: [string, number][] = [["Selten", 3], ["Normal", 1], ["Oft", 0.4]];
   let input = $state<HTMLInputElement | null>(null);
   // ponytail: keine Tabs-UI, eine Session pro Projekt; Tab-Leiste wenn mehrere parallel sichtbar sein sollen.
   let sessions = $state<{ id: string; repo: Repo }[]>([]);
@@ -107,6 +112,10 @@
     tray = !tray;
     await invoke("set_tray", { on: tray });
     await store.set("tray", tray);
+  }
+
+  function saveAmongUs() {
+    store.set("amongUs", $state.snapshot(amongUs));
   }
 
   async function togglePin(path: string) {
@@ -204,6 +213,7 @@
     accounts = (await store.get<Account[]>("accounts")) ?? [];
     autostart = await isEnabled().catch(() => false);
     tray = (await store.get<boolean>("tray")) ?? true;
+    amongUs = { ...amongUs, ...(await store.get<typeof amongUs>("amongUs")) };
     if (!mac) await invoke("set_tray", { on: tray });
 
     // Erster Start: Dev-Ordner erst bestaetigen lassen, dann einlesen.
@@ -418,7 +428,7 @@
 
 <svelte:window onkeydown={onKey} onkeydowncapture={noteCtrl} onpointerdowncapture={noteCtrl} />
 
-<IdleAmongUs />
+{#if amongUs.on}<IdleAmongUs rate={amongUs.rate} volume={amongUs.volume} />{/if}
 
 <div
   class="bg-chrome border-border flex h-9 items-center border-b {mac ? 'pl-20' : 'pl-3.5'}"
@@ -621,6 +631,38 @@
                 {@render setting("Schließen legt ins Tray", tray, toggleTray, InboxIcon)}
                 <DropdownMenu.Separator class="bg-border my-1 h-px" />
               {/if}
+              {@render setting("Among-Us-Easteregg", amongUs.on, () => ((amongUs.on = !amongUs.on), saveAmongUs()), GhostIcon)}
+              {#if amongUs.on}
+                <div class="flex items-center gap-2 px-2 py-1.5">
+                  <span class="text-muted-foreground w-3.5"></span>
+                  <span class="flex-1">Häufigkeit</span>
+                  <div class="bg-secondary flex rounded p-0.5">
+                    {#each RATES as [label, rate] (rate)}
+                      <button
+                        class="rounded px-1.5 py-0.5 text-[10px] {amongUs.rate === rate
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:text-foreground'}"
+                        onclick={() => ((amongUs.rate = rate), saveAmongUs())}>{label}</button
+                      >
+                    {/each}
+                  </div>
+                </div>
+                <label class="flex items-center gap-2 px-2 py-1.5">
+                  <VolumeIcon class="text-muted-foreground size-3.5" />
+                  <span class="flex-1">Sound</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    class="accent-primary w-24"
+                    aria-label="Easteregg-Lautstärke"
+                    bind:value={amongUs.volume}
+                    onchange={saveAmongUs}
+                  />
+                </label>
+              {/if}
+              <DropdownMenu.Separator class="bg-border my-1 h-px" />
               <DropdownMenu.Item
                 class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5"
                 onSelect={() => (help = true)}

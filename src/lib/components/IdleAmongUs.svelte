@@ -2,6 +2,9 @@
   // Portiert aus akiosk-frontend/src/components/IdleAmongUs.vue — gleiche Timings und Physik.
   import { onMount } from "svelte";
 
+  // rate: Faktor auf die Wartezeiten (2 = halb so oft), volume: 0..1 fuer alle Sounds.
+  let { rate = 1, volume = 1 }: { rate?: number; volume?: number } = $props();
+
   const FIRST_SPAWN = 15000;
   const NEXT_MIN = 5000;
   const NEXT_MAX = 12000;
@@ -34,6 +37,11 @@
   let audioCtx: AudioContext | null = null;
   let killBuffer: AudioBuffer | null = null;
   let walkBuffer: AudioBuffer | null = null;
+  let master: GainNode | null = null;
+
+  $effect(() => {
+    if (master) master.gain.value = volume;
+  });
 
   function onActivity() {
     userActive = true;
@@ -41,12 +49,12 @@
     idleTimer = setTimeout(() => {
       userActive = false;
       scheduleNext();
-    }, FIRST_SPAWN);
+    }, FIRST_SPAWN * rate);
   }
 
   function scheduleNext() {
     if (userActive) return;
-    idleTimer = setTimeout(spawn, NEXT_MIN + Math.random() * (NEXT_MAX - NEXT_MIN));
+    idleTimer = setTimeout(spawn, (NEXT_MIN + Math.random() * (NEXT_MAX - NEXT_MIN)) * rate);
   }
 
   function findSafeY(): number {
@@ -67,7 +75,7 @@
     const gain = audioCtx.createGain();
     gain.gain.value = 0;
     source.connect(gain);
-    gain.connect(audioCtx.destination);
+    gain.connect(master!);
     source.start(0, Math.random() * walkBuffer.duration);
     c.walkSource = source;
     c.walkGain = gain;
@@ -152,7 +160,7 @@
     if (audioCtx && killBuffer) {
       const source = audioCtx.createBufferSource();
       source.buffer = killBuffer;
-      source.connect(audioCtx.destination);
+      source.connect(master!);
       source.start(0, 0.25);
     }
   }
@@ -164,13 +172,16 @@
 
   onMount(() => {
     audioCtx = new AudioContext();
+    master = audioCtx.createGain();
+    master.gain.value = volume;
+    master.connect(audioCtx.destination);
     preload("/easteregg/killsound.mp3").then((b) => (killBuffer = b), () => {});
     preload("/easteregg/walking.mp3").then((b) => (walkBuffer = b), () => {});
 
     const events = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];
     // Capture: xterm stoppt die Propagation seiner Tasten-Events, sonst zaehlt Tippen im Terminal nicht.
     for (const e of events) window.addEventListener(e, onActivity, { passive: true, capture: true });
-    idleTimer = setTimeout(spawn, FIRST_SPAWN);
+    idleTimer = setTimeout(spawn, FIRST_SPAWN * rate);
 
     return () => {
       for (const e of events) window.removeEventListener(e, onActivity, { capture: true });
