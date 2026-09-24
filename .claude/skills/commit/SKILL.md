@@ -59,4 +59,8 @@ Push auf `master` startet keine Action (CI nur bei PRs, Release nur bei Tags). P
 
 ## 5. Meldung
 
-Dem User die gepushten Commits (Hash + Titel) auflisten, fertig.
+Dem User die gepushten Commits (Hash + Titel) auflisten.
+
+## 6. Aufräumen
+
+Wurde in der Session Rust gebaut oder getestet: danach den `cleanup`-Skill ausführen (gibt `src-tauri/target` frei).
