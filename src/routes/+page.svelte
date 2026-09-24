@@ -204,7 +204,7 @@
     accounts = (await store.get<Account[]>("accounts")) ?? [];
     autostart = await isEnabled().catch(() => false);
     tray = (await store.get<boolean>("tray")) ?? true;
-    await invoke("set_tray", { on: tray });
+    if (!mac) await invoke("set_tray", { on: tray });
 
     // Erster Start: Dev-Ordner erst bestaetigen lassen, dann einlesen.
     if (!saved) {
@@ -515,7 +515,7 @@
       class="text-primary mr-1 h-6 gap-1.5 text-[11px]"
       disabled={updating}
       onclick={installUpdate}
-      title="Update installieren und neu starten"
+      title={`Update installieren und neu starten${update.body ? `\n\n${update.body}` : ""}`}
       ><DownloadIcon class="size-3.5" /> {updating ? "Aktualisiere…" : `Update ${update.version}`}</Button
     >
   {/if}
@@ -615,9 +615,12 @@
               sideOffset={4}
               class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-56 rounded-lg p-1 text-xs shadow-lg ring-1"
             >
-              {@render setting("Mit Windows starten", autostart, toggleAutostart, PowerIcon)}
-              {@render setting("Schließen legt ins Tray", tray, toggleTray, InboxIcon)}
-              <DropdownMenu.Separator class="bg-border my-1 h-px" />
+              <!-- macOS: Dock statt Tray, Autostart ueber die Systemeinstellungen. -->
+              {#if !mac}
+                {@render setting("Autostart", autostart, toggleAutostart, PowerIcon)}
+                {@render setting("Schließen legt ins Tray", tray, toggleTray, InboxIcon)}
+                <DropdownMenu.Separator class="bg-border my-1 h-px" />
+              {/if}
               <DropdownMenu.Item
                 class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5"
                 onSelect={() => (help = true)}

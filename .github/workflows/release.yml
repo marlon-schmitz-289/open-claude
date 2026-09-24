@@ -30,6 +30,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Tags fuer den Changelog
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -52,6 +55,20 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # Changelog: Stichpunkte der feat/fix-Commits seit dem letzten Tag
+      - name: Changelog
+        id: notes
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+        shell: bash
+        run: |
+          prev=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          {
+            echo 'body<<NOTES_EOF'
+            git log ${prev:+$prev..}"$GITHUB_REF_NAME" --no-merges -E --grep='^(feat|fix)' --format=%b \
+              | grep -E '^(- |  )' | grep -vE '^- Version [0-9]'
+            echo NOTES_EOF
+          } >> "$GITHUB_OUTPUT"
+
       # beforeDevCommand baut ocui-sh nur fuer den Dev-Modus, im Release-Build reicht beforeBuildCommand
       - uses: tauri-apps/tauri-action@v0
         if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
@@ -61,6 +78,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Open Claude __VERSION__"
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

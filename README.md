@@ -89,12 +89,15 @@ laufende Sitzungen sind in der Liste markiert. Beenden (Titelleiste oder das X a
 fragt vorher nach. Das Terminal startet `ocui-sh`, die neben der App liegt: erst `claude`, danach
 eine einfache Shell. Fehlt sie, nimmt die App Git-Bash, `pwsh` oder `cmd`.
 
-Das Zahnrad rechts in der Suchleiste hat zwei Schalter:
+Das Zahnrad rechts in der Suchleiste hat unter Windows und Linux zwei Schalter:
 
 - *Schließen legt ins Tray* (Standard: an): Schließen versteckt das Fenster nur, es kommt per
   Klick aufs Tray-Icon zurück; beendet wird die App über *Beenden* im Kontextmenü des Tray-Icons.
   Ist der Schalter aus, beendet Schließen die App samt allen laufenden Sitzungen.
-- *Mit Windows starten* trägt die App in den Autostart des angemeldeten Benutzers ein.
+- *Autostart* startet die App bei der Anmeldung des Benutzers.
+
+Unter macOS gibt es beide nicht: Schließen versteckt das Fenster, ein Klick aufs Dock- oder Menüleisten-Icon holt es
+zurück, Cmd+Q beendet die App. Autostart läuft dort über die Anmeldeobjekte der Systemeinstellungen.
 
 Daneben liegen *Neu einlesen*, *Klonen* und *Konten* als Icons.
 

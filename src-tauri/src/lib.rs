@@ -286,7 +286,12 @@ fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 reopen(tray.app_handle());
             }
         });
-    if let Some(icon) = app.default_window_icon() {
+    // macOS: einfarbiges Template, das System faerbt es passend zur Menueleiste.
+    if cfg!(target_os = "macos") {
+        builder = builder
+            .icon(tauri::include_image!("icons/tray-template.png"))
+            .icon_as_template(true);
+    } else if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone());
     }
     builder.build(app)?;
@@ -384,7 +389,7 @@ pub fn run() {
             git::git_conflict_sides
         ])
         .setup(|app| tray(app.handle()).map_err(Into::into))
-        // Mit Tray versteckt Schliessen nur — raus kommt man dann ueber das Tray-Menue.
+        // Mit Tray (macOS: immer) versteckt Schliessen nur — raus kommt man dann ueber das Tray-Menue.
         .on_window_event(|window, event| {
             if !TRAY.load(Ordering::Relaxed) {
                 return;
@@ -396,10 +401,11 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|app, event| {
-            if let tauri::RunEvent::Exit = event {
-                app.state::<pty::Ptys>().close_all();
-            }
+        .run(|app, event| match event {
+            tauri::RunEvent::Exit => app.state::<pty::Ptys>().close_all(),
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => reopen(app),
+            _ => {}
         });
 }
 
