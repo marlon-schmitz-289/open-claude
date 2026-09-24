@@ -45,8 +45,8 @@ keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
-codegen-units = 1
-lto = true
+# Thin statt volles LTO mit einer Codegen-Unit: der Schritt lief einkernig und war der Grossteil der Build-Zeit.
+lto = "thin"
 opt-level = 3
 panic = "abort"
 strip = true
