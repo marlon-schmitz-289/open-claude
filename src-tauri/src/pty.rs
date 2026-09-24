@@ -174,6 +174,12 @@ pub fn pty_open(
         cmd.env_remove(key);
     }
 
+    // Sonst laufen claude und git im Terminal gegen unsere gebuendelten Bibliotheken.
+    crate::unbundle_env(|key, val| match val {
+        Some(v) => cmd.env(key, v),
+        None => cmd.env_remove(key),
+    });
+
     let mut child = pair
         .slave
         .spawn_command(cmd)
