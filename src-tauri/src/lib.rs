@@ -119,11 +119,70 @@ pub(crate) fn native(program: &str) -> (&str, Vec<&str>) {
     }
 }
 
+/// AppImage: `AppRun` setzt LD_LIBRARY_PATH und die GTK-Variablen auf das entpackte
+/// AppDir. Jeder Kindprozess erbt das und laedt dann unsere gebuendelten Bibliotheken
+/// statt seiner eigenen — /usr/bin/git stirbt beim Klonen an
+/// `undefined symbol: nghttp2_...` aus der mitgelieferten libnghttp2.
+/// Also streichen, was ins AppDir zeigt; None heisst: Variable loeschen.
+/// Setzt der AppRun-Hook hart, ohne dass ein Pfad drinsteht: GDK_BACKEND, weil die
+/// Webview unter Wayland abstuerzt, GTK_THEME, weil gebuendelte Themes kaputt sind.
+/// Eine per xdg-open gestartete GUI-App waere damit auf XWayland und Adwaita
+/// festgenagelt. Den Originalwert hat der Hook ueberschrieben, er ist nicht mehr zu
+/// holen — geloescht nimmt das Kind wenigstens die Vorgabe des Systems.
+const HOOK_VARS: [&str; 3] = ["APPDIR", "GDK_BACKEND", "GTK_THEME"];
+
+fn strip_appdir(
+    appdir: &str,
+    vars: impl Iterator<Item = (String, String)>,
+) -> Vec<(String, Option<String>)> {
+    if appdir.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<(String, Option<String>)> =
+        HOOK_VARS.iter().map(|k| (k.to_string(), None)).collect();
+    for (key, val) in vars {
+        if HOOK_VARS.contains(&key.as_str()) || !val.contains(appdir) {
+            continue;
+        }
+        // Pfadlisten nur kuerzen statt loeschen: was nicht im AppDir liegt, ist die
+        // echte Systemumgebung und wird gebraucht (XDG_DATA_DIRS, PATH).
+        // Leere Segmente fallen mit weg — AppRun haengt gern ein ":" an, und ein
+        // leerer Eintrag heisst fuer den Loader "aktuelles Verzeichnis".
+        let kept: Vec<&str> = val
+            .split(':')
+            .filter(|p| !p.is_empty() && !p.starts_with(appdir))
+            .collect();
+        out.push((key, (!kept.is_empty()).then(|| kept.join(":"))));
+    }
+    out
+}
+
+/// Nimmt dem Kommando die AppImage-Umgebung. Ausserhalb eines AppImage (deb, dev,
+/// Windows, macOS) ist APPDIR nicht gesetzt und nichts aendert sich.
+pub(crate) fn unbundle_env(mut set: impl FnMut(&str, Option<&str>)) {
+    let Ok(appdir) = std::env::var("APPDIR") else { return };
+    for (key, val) in strip_appdir(&appdir, std::env::vars()) {
+        set(&key, val.as_deref());
+    }
+}
+
+fn unbundle(cmd: &mut Command) {
+    unbundle_env(|key, val| match val {
+        Some(v) => {
+            cmd.env(key, v);
+        }
+        None => {
+            cmd.env_remove(key);
+        }
+    });
+}
+
 /// Startet ein Kommando ohne eigenes Konsolenfenster.
 fn quiet(program: &str) -> Command {
     let (exe, pre) = native(program);
     let mut cmd = Command::new(exe);
     cmd.args(pre);
+    unbundle(&mut cmd);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -237,7 +296,10 @@ pub(crate) fn open_system(target: impl AsRef<std::ffi::OsStr>) -> std::io::Resul
         "xdg-open"
     };
     // wait im Thread, sonst bleibt unter Unix ein Zombie-Prozess stehen
-    let mut child = Command::new(prog).arg(target).spawn()?;
+    let mut cmd = Command::new(prog);
+    cmd.arg(target);
+    unbundle(&mut cmd);
+    let mut child = cmd.spawn()?;
     std::thread::spawn(move || child.wait());
     Ok(())
 }
@@ -411,7 +473,62 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{branch_from_head, langs_in, scan_blocking};
+    use super::{branch_from_head, langs_in, scan_blocking, strip_appdir, HOOK_VARS};
+
+    const APPDIR: &str = "/tmp/.mount_OpenCl42";
+
+    fn stripped(vars: &[(&str, &str)]) -> Vec<(String, Option<String>)> {
+        let owned = vars.iter().map(|(k, v)| (k.to_string(), v.to_string()));
+        strip_appdir(APPDIR, owned)
+    }
+
+    /// None: bleibt unangetastet. Some(None): wird geloescht.
+    /// Some(Some(v)): wird auf v gekuerzt.
+    fn wert(vars: &[(&str, &str)], key: &str) -> Option<Option<String>> {
+        stripped(vars).into_iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    #[test]
+    fn loescht_variablen_die_nur_ins_appdir_zeigen() {
+        // Der Fall aus dem Bug: git laedt sonst unsere libnghttp2 statt der vom System.
+        let env = &[
+            ("LD_LIBRARY_PATH", "/tmp/.mount_OpenCl42/usr/lib:/tmp/.mount_OpenCl42/lib"),
+            ("GDK_PIXBUF_MODULE_FILE", "/tmp/.mount_OpenCl42/usr/lib/loaders.cache"),
+        ];
+        assert_eq!(wert(env, "APPDIR"), Some(None));
+        assert_eq!(wert(env, "LD_LIBRARY_PATH"), Some(None));
+        assert_eq!(wert(env, "GDK_PIXBUF_MODULE_FILE"), Some(None));
+        // AppRun haengt ein abschliessendes ":" an; das leere Segment darf nicht
+        // als Wert uebrigbleiben, sonst sucht der Loader im Arbeitsverzeichnis.
+        let trailing = &[("LD_LIBRARY_PATH", "/tmp/.mount_OpenCl42/usr/lib/:")];
+        assert_eq!(wert(trailing, "LD_LIBRARY_PATH"), Some(None));
+    }
+
+    #[test]
+    fn kuerzt_pfadlisten_statt_sie_zu_leeren() {
+        // XDG_DATA_DIRS haengt das AppDir vorne an; der Systemteil muss bleiben.
+        let env = &[("XDG_DATA_DIRS", "/tmp/.mount_OpenCl42/usr/share:/usr/share:/usr/local/share")];
+        assert_eq!(wert(env, "XDG_DATA_DIRS"), Some(Some("/usr/share:/usr/local/share".into())));
+        // PATH beginnt mit $APPDIR/usr/bin — sonst findet ein Kind dort ocui-sh.
+        let path = &[("PATH", "/tmp/.mount_OpenCl42/usr/bin:/usr/bin:/bin")];
+        assert_eq!(wert(path, "PATH"), Some(Some("/usr/bin:/bin".into())));
+    }
+
+    #[test]
+    fn raeumt_auch_die_hart_gesetzten_hook_variablen_weg() {
+        let env = &[("GDK_BACKEND", "x11"), ("GTK_THEME", "Adwaita:dark")];
+        assert_eq!(wert(env, "GDK_BACKEND"), Some(None));
+        assert_eq!(wert(env, "GTK_THEME"), Some(None));
+        // Kein Doppeleintrag, obwohl sie schon in HOOK_VARS stehen.
+        assert_eq!(stripped(env).len(), HOOK_VARS.len());
+    }
+
+    #[test]
+    fn laesst_umgebung_ohne_appdir_in_ruhe() {
+        assert_eq!(wert(&[("HOME", "/home/m"), ("PATH", "/usr/bin:/bin")], "PATH"), None);
+        // Ausserhalb eines AppImage faellt die Bereinigung ganz weg.
+        assert!(strip_appdir("", std::iter::empty()).is_empty());
+    }
 
     #[test]
     fn findet_tief_verschachtelte_repos() {
