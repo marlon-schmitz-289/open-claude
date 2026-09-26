@@ -188,11 +188,26 @@
     return () => off.then((f) => f());
   });
 
-  // Neue Version aus GitHub-Releases; Fehler (offline, Dev-Build) still ignorieren.
+  // Neue Version aus GitHub-Releases, beim Start und alle 4 h; Fehler (offline, Dev-Build) still ignorieren.
   let update = $state<Update | null>(null);
   let updating = $state(false);
+  let checking = $state(false);
+  async function checkUpdate(manual = false) {
+    if (updating || checking) return;
+    checking = true;
+    try {
+      update = (await check()) ?? update;
+      if (manual && !update) notice = "Open Claude ist aktuell.";
+    } catch (e) {
+      if (manual) notice = `Update-Prüfung fehlgeschlagen: ${e}`;
+    } finally {
+      checking = false;
+    }
+  }
   onMount(() => {
-    check().then((u) => (update = u), () => {});
+    checkUpdate();
+    const id = setInterval(checkUpdate, 4 * 60 * 60 * 1000);
+    return () => clearInterval(id);
   });
 
   async function installUpdate() {
@@ -726,6 +741,13 @@
                 </label>
               {/if}
               <DropdownMenu.Separator class="bg-border my-1 h-px" />
+              <DropdownMenu.Item
+                class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5"
+                onSelect={() => checkUpdate(true)}
+              >
+                <RefreshIcon class="text-muted-foreground size-3.5 {checking ? 'animate-spin' : ''}" />
+                <span class="flex-1">Nach Updates suchen</span>
+              </DropdownMenu.Item>
               <DropdownMenu.Item
                 class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5"
                 onSelect={() => (help = true)}
