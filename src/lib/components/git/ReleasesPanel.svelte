@@ -12,6 +12,7 @@
   import PlusIcon from "@lucide/svelte/icons/plus";
   import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
   import PackageIcon from "@lucide/svelte/icons/package";
+  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
 
   let { repo, refreshKey }: { repo: string; refreshKey: number } = $props();
 
@@ -167,6 +168,14 @@
       <div class="border-border flex shrink-0 flex-col border-r" style="width:{listW}px; max-width:60%">
         <div class="border-border flex items-center gap-2 border-b px-2 py-1.5">
           <span class="text-muted-foreground flex-1 truncate">{host}</span>
+          <button
+            class="text-muted-foreground hover:text-foreground disabled:opacity-50"
+            title="Neu laden"
+            disabled={loading}
+            onclick={() => reload()}
+          >
+            <RefreshCwIcon class="size-3.5 {loading ? 'animate-spin' : ''}" />
+          </button>
           <Button size="sm" variant="outline" class="h-6 text-[11px]" disabled={busy || !kind} onclick={() => openForm(null)}>
             <PlusIcon class="size-3" />Neues Release
           </Button>
