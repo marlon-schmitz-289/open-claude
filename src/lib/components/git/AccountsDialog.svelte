@@ -31,7 +31,7 @@
   const tokenUrl = $derived(
     kind === "github"
       ? `https://${bare}/settings/tokens/new?scopes=repo,read:org&description=ocui`
-      : `https://${bare}/-/user_settings/personal_access_tokens?name=ocui&scopes=read_api,read_repository,write_repository`,
+      : `https://${bare}/-/user_settings/personal_access_tokens?name=ocui&scopes=api,read_repository,write_repository`,
   );
 
   async function persist(next: Account[]) {
@@ -144,7 +144,7 @@
       >
         <ExternalLinkIcon class="size-3" /> Token mit den nötigen Rechten erstellen ({kind === "github"
           ? "repo, read:org"
-          : "read_api, read_repository, write_repository"})
+          : "api, read_repository, write_repository"})
       </button>
       {#if error}<p class="text-destructive text-xs">{error}</p>{/if}
       <div class="flex gap-1.5">
