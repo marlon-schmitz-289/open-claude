@@ -2,7 +2,7 @@
   import { age } from "$lib/utils";
   import { open as pickFolder } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
-  import { forge, type Account, type RemoteRepo, type CloneProgress } from "$lib/git";
+  import { forge, accountId, type Account, type RemoteRepo, type CloneProgress } from "$lib/git";
   import { fuzzy } from "$lib/fuzzy";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -95,7 +95,7 @@
     loading = true;
     error = "";
     try {
-      const more = await forge.repos(a.kind, a.host, "", pg);
+      const more = await forge.repos(a.kind, a.host, a.user, "", pg);
       if (account !== a) return; // inzwischen anderes Konto gewaehlt
       own = pg === 1 ? more : [...own, ...more];
       page = pg;
@@ -115,7 +115,7 @@
     loading = true;
     error = "";
     try {
-      searched = await forge.repos(account.kind, account.host, query.trim(), 1);
+      searched = await forge.repos(account.kind, account.host, account.user, query.trim(), 1);
     } catch (e) {
       error = String(e);
     }
@@ -154,10 +154,20 @@
     error = "";
     progress = null;
     cloneId = crypto.randomUUID();
+    const id = mode === "browse" && account ? accountId(account) : null;
     const unlisten = await listen<CloneProgress>(`clone:${cloneId}`, (e) => (progress = e.payload));
     try {
-      const path = await forge.clone(cloneId, cloneUrl, dest.trim());
+      const path = await forge.clone(cloneId, cloneUrl, dest.trim(), id);
+      // Konto fuers Repo merken, bevor onclone es oeffnet (sonst zeigt GitView noch das alte);
+      // scheitert das, bleibt der Dialog mit der Meldung offen, der Clone steht trotzdem.
+      const failed = id && (await forge.setRepoAccount(path, id).then(() => "", String));
       onclone(path);
+      if (failed) {
+        error = `Geklont, aber Konto nicht gesetzt: ${failed}`;
+        selected = null;
+        progress = null;
+        return;
+      }
       open = false;
       reset();
     } catch (e) {

@@ -877,7 +877,7 @@
   {#if gitRepo}
     <div class="min-h-0 flex-1">
       {#key gitRepo.path}
-        <GitView bind:this={gitView} repo={gitRepo.path} />
+        <GitView bind:this={gitView} repo={gitRepo.path} {accounts} onaccounts={() => (accountsOpen = true)} />
       {/key}
     </div>
   {/if}

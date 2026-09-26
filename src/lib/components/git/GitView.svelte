@@ -5,7 +5,7 @@
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
-  import { git, type ForgeKind, type Status } from "$lib/git";
+  import { git, forge, accountId, type Account, type ForgeKind, type RepoAccount, type Status } from "$lib/git";
   import Sidebar from "./Sidebar.svelte";
   import ChangesPanel from "./ChangesPanel.svelte";
   import HistoryPanel from "./HistoryPanel.svelte";
@@ -22,8 +22,10 @@
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
   import TriangleAlertIcon from "@lucide/svelte/icons/triangle-alert";
+  import UserIcon from "@lucide/svelte/icons/user";
+  import CheckIcon from "@lucide/svelte/icons/check";
 
-  let { repo }: { repo: string } = $props();
+  let { repo, accounts, onaccounts }: { repo: string; accounts: Account[]; onaccounts: () => void } = $props();
 
   let status = $state<Status | null>(null);
   let refreshKey = $state(0);
@@ -81,6 +83,38 @@
     repo;
     untrack(refresh); // refresh liest status, sonst laedt jeder neue Status erneut: Endlosschleife
   });
+
+  // Konto des Repos (git config ocui.account) fuer Push/Pull/API und die Commit-Identitaet.
+  let acct = $state<RepoAccount | null>(null);
+  const acctFor = $derived(accounts.find((a) => accountId(a) === acct?.effective) ?? null);
+  const hostAccounts = $derived(accounts.filter((a) => a.host === acct?.host));
+
+  async function loadAccount() {
+    const r = repo;
+    try {
+      const res = await forge.repoAccount(r);
+      if (r === repo) acct = res;
+    } catch (e) {
+      if (r === repo) error = `Konto: ${e}`;
+    }
+  }
+
+  $effect(() => {
+    repo;
+    acct = null;
+    loadAccount();
+  });
+
+  /** Neues Konto setzen; Forge-Panels laden danach mit dessen Token nach. */
+  async function setAccount(id: string | null) {
+    error = "";
+    try {
+      acct = await forge.setRepoAccount(repo, id);
+    } catch (e) {
+      error = String(e);
+    }
+    await refresh(true, true);
+  }
 
   /** Aktion mit Ladeanzeige; Ausgabe von git als Hinweis, Fehler rot. */
   async function run(label: string, action: () => Promise<unknown>) {
@@ -205,6 +239,54 @@
     {@render tool("Stash", "Änderungen stashen", () => (stash = { message: "", untracked: true }), ArchiveIcon)}
     {@render tool("Branch", "Neuer Branch ab HEAD", () => (branchName = ""), GitBranchPlusIcon)}
     <span class="flex-1"></span>
+    {#if acct}
+      <DropdownMenu.Root onOpenChange={(o) => o && loadAccount()}>
+        <DropdownMenu.Trigger
+          class="text-muted-foreground hover:bg-secondary hover:text-foreground flex h-7 items-center gap-1.5 rounded px-2 text-[11px]"
+          title={acct.name || acct.email ? `Commit als: ${acct.name ?? "?"} <${acct.email ?? "?"}>` : "Keine Commit-Identität gesetzt"}
+        >
+          {#if acctFor?.avatar}
+            <img src={acctFor.avatar} alt="" class="size-4 rounded-full" />
+          {:else}
+            <UserIcon class="size-3.5" />
+          {/if}
+          {#if acct.effective}
+            {acct.effective.slice(acct.effective.lastIndexOf(":") + 1)}
+            {#if !acct.account}<span class="opacity-60">(auto)</span>{/if}
+          {:else}
+            System-Git
+          {/if}
+          <ChevronDownIcon class="size-3" />
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            align="end"
+            class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-44 rounded-md p-1 text-xs ring-1"
+          >
+            {#each hostAccounts as a (accountId(a))}
+              <DropdownMenu.Item
+                class="hover:bg-accent data-highlighted:bg-accent flex cursor-pointer items-center gap-1.5 rounded px-2 py-1"
+                onSelect={() => setAccount(accountId(a))}
+              >
+                <CheckIcon class="size-3 {acct.account === accountId(a) ? '' : 'invisible'}" />
+                {a.user}<span class="text-muted-foreground font-mono text-[10px]">@{a.host}</span>
+              </DropdownMenu.Item>
+            {/each}
+            <DropdownMenu.Item
+              class="hover:bg-accent data-highlighted:bg-accent flex cursor-pointer items-center gap-1.5 rounded px-2 py-1"
+              onSelect={() => setAccount(null)}
+            >
+              <CheckIcon class="size-3 {acct.account ? 'invisible' : ''}" />
+              Standard (System-Git)
+            </DropdownMenu.Item>
+            <DropdownMenu.Separator class="bg-border my-1 h-px" />
+            <DropdownMenu.Item class="hover:bg-accent data-highlighted:bg-accent cursor-pointer rounded px-2 py-1" onSelect={onaccounts}
+              >Konten verwalten …</DropdownMenu.Item
+            >
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+    {/if}
     {#if busy}<span class="text-muted-foreground mr-2 text-[11px]">{busy} läuft …</span>{/if}
   </div>
 

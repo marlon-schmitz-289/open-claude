@@ -44,7 +44,7 @@
       const remotes = await git.remotes(repo);
       if (g !== gen) return;
       originUrl = remotes.find((r) => r.name === "origin")?.url ?? null;
-      const res = originUrl ? await forge.releases(originUrl, 1) : null;
+      const res = originUrl ? await forge.releases(repo, originUrl, 1) : null;
       if (g !== gen) return;
       noAccount = !!originUrl && !res;
       kind = res?.kind ?? null;
@@ -65,7 +65,7 @@
     const g = gen;
     loading = true;
     try {
-      const res = await forge.releases(originUrl, page + 1);
+      const res = await forge.releases(repo, originUrl, page + 1);
       if (g !== gen) return;
       const next = res?.items ?? [];
       items = [...items, ...next.filter((r) => !items.some((o) => o.id === r.id))];
@@ -116,7 +116,7 @@
     const url = originUrl;
     const { id, ...input } = form;
     const ok = await run(() =>
-      forge.releaseSave(url, id, {
+      forge.releaseSave(repo, url, id, {
         ...input,
         tag: input.tag.trim(),
         name: input.name.trim() || input.tag.trim(),
@@ -129,7 +129,7 @@
   function publish(r: Release) {
     const url = originUrl!;
     run(() =>
-      forge.releaseSave(url, r.id, { tag: r.tag, name: r.name, body: r.body, draft: false, prerelease: r.prerelease, target: null }),
+      forge.releaseSave(repo, url, r.id, { tag: r.tag, name: r.name, body: r.body, draft: false, prerelease: r.prerelease, target: null }),
     );
   }
 
@@ -140,7 +140,7 @@
     if (!r || !originUrl) return;
     const url = originUrl;
     await run(async () => {
-      await forge.releaseDelete(url, r.id);
+      await forge.releaseDelete(repo, url, r.id);
       return null;
     });
   }

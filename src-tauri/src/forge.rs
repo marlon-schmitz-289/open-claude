@@ -9,6 +9,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
+use tauri_plugin_store::StoreExt;
 
 #[derive(Serialize)]
 pub struct Account {
@@ -114,6 +115,15 @@ pub struct Job {
     web_url: String,
 }
 
+#[derive(Serialize, Debug, PartialEq)]
+pub struct RepoAccount {
+    account: Option<String>,
+    effective: Option<String>,
+    host: Option<String>,
+    name: Option<String>,
+    email: Option<String>,
+}
+
 #[derive(Serialize, Clone)]
 struct CloneProgress {
     line: String,
@@ -151,28 +161,100 @@ fn api_base(kind: &str, host: &str) -> String {
     }
 }
 
-fn entry(kind: &str, host: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new("ocui", &format!("{kind}:{host}"))
-        .map_err(|e| format!("Anmeldeinfo-Speicher: {e}"))
+fn kstore(e: keyring::Error) -> String {
+    format!("Anmeldeinfo-Speicher: {e}")
 }
 
-/// None = kein Konto hinterlegt.
-fn token(kind: &str, host: &str) -> Result<Option<String>, String> {
-    match entry(kind, host)?.get_password() {
+/// key ist "kind:host:user", alt (ein Konto pro Host) "kind:host".
+fn entry(key: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new("ocui", key).map_err(kstore)
+}
+
+fn get(key: &str) -> Result<Option<String>, String> {
+    match entry(key)?.get_password() {
         Ok(t) => Ok(Some(t)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("Anmeldeinfo-Speicher: {e}")),
+        Err(e) => Err(kstore(e)),
     }
 }
 
-/// Erstes Konto (GitHub vor GitLab), das zu diesem Host passt.
-fn token_for_host(host: &str) -> Result<Option<(&'static str, String)>, String> {
-    for kind in ["github", "gitlab"] {
-        if let Some(t) = token(kind, host)? {
-            return Ok(Some((kind, t)));
-        }
+/// Alter Eintrag "kind:host" gehoert dem ersten bekannten Konto dieser Art am Host:
+/// vorher gab es nur eins pro Host, neue Konten werden hinten angehaengt.
+fn owns_legacy(known: &[(String, String, String)], kind: &str, host: &str, user: &str) -> bool {
+    known.iter().find(|(k, h, _)| k == kind && h == host).is_some_and(|(_, _, u)| u == user)
+}
+
+/// None = kein Konto hinterlegt. Alter Eintrag ohne user wird beim ersten Zugriff umgezogen,
+/// aber nur fuer seinen Besitzer (sonst bekaeme ein anderes Konto dessen Token).
+fn token(kind: &str, host: &str, user: &str, known: &[(String, String, String)]) -> Result<Option<String>, String> {
+    let key = format!("{kind}:{host}:{user}");
+    if let Some(t) = get(&key)? {
+        return Ok(Some(t));
     }
-    Ok(None)
+    if !owns_legacy(known, kind, host, user) {
+        return Ok(None);
+    }
+    let legacy = format!("{kind}:{host}");
+    let Some(t) = get(&legacy)? else {
+        return Ok(None);
+    };
+    entry(&key)?.set_password(&t).map_err(kstore)?;
+    let _ = entry(&legacy)?.delete_credential();
+    Ok(Some(t))
+}
+
+/// "github:gitlab.firma.de:8443:octo" -> (kind, host, user); host darf einen Port haben.
+fn parse_account(id: &str) -> Option<(&'static str, String, String)> {
+    let (kind, rest) = id.split_once(':')?;
+    let (host, user) = rest.rsplit_once(':')?;
+    check_kind(kind).ok()?;
+    let kind = if kind == "github" { "github" } else { "gitlab" };
+    let host = norm_host(host).ok()?;
+    if user.is_empty() || user.contains(':') {
+        return None;
+    }
+    Some((kind, host, user.to_string()))
+}
+
+/// Vom Frontend gepflegte Kontenliste (settings.json, "accounts") als (kind, host, user).
+fn known(app: &AppHandle) -> Vec<(String, String, String)> {
+    let Ok(store) = app.store("settings.json") else {
+        return Vec::new();
+    };
+    let list = store.get("accounts").unwrap_or_default();
+    items(&list, |a| (s(&a["kind"]), s(&a["host"]), s(&a["user"])))
+}
+
+/// Explizites Konto, wenn gueltig und fuer diesen Host; sonst erstes bekanntes (GitHub vor GitLab).
+fn pick(explicit: Option<&str>, host: &str, known: &[(String, String, String)]) -> Option<(&'static str, String, String)> {
+    if let Some(a) = explicit.and_then(parse_account).filter(|a| a.1 == host) {
+        return Some(a);
+    }
+    ["github", "gitlab"].into_iter().find_map(|kind| {
+        known
+            .iter()
+            .find(|(k, h, u)| k == kind && h == host && !u.is_empty() && !u.contains(':'))
+            .map(|(_, _, u)| (kind, host.to_string(), u.clone()))
+    })
+}
+
+/// Authorization-Header fuer git ueber https, nur fuer diesen Host und per Env statt argv.
+fn auth_env(kind: &str, host: &str, tok: &str) -> [(String, String); 3] {
+    let user = if kind == "github" { "x-access-token" } else { "oauth2" };
+    let basic = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{tok}"));
+    [
+        ("GIT_CONFIG_COUNT".into(), "1".into()),
+        ("GIT_CONFIG_KEY_0".into(), format!("http.https://{host}/.extraHeader")),
+        ("GIT_CONFIG_VALUE_0".into(), format!("Authorization: Basic {basic}")),
+    ]
+}
+
+/// Fuer fetch/pull/push: nur mit explizit gewaehltem Konto, sonst None (System-Credential-Helper).
+pub(crate) fn repo_auth(repo: &str) -> Option<[(String, String); 3]> {
+    let (kind, host, user) = parse_account(&crate::git::config(repo, "ocui.account")?)?;
+    // Ohne Kontenliste kein Umzug; set_repo_account hat den Token beim Binden schon umgezogen.
+    let tok = token(kind, &host, &user, &[]).ok()??;
+    Some(auth_env(kind, &host, &tok))
 }
 
 async fn api_get(kind: &str, host: &str, tok: &str, path: &str, query: &[(&str, String)]) -> Result<Value, String> {
@@ -251,9 +333,7 @@ async fn verify(kind: String, host: String, tok: String) -> Result<Account, Stri
     }
     let me = api_get(&kind, &host, &tok, "/user", &[]).await?;
     let user = if kind == "github" { s(&me["login"]) } else { s(&me["username"]) };
-    entry(&kind, &host)?
-        .set_password(&tok)
-        .map_err(|e| format!("Anmeldeinfo-Speicher: {e}"))?;
+    entry(&format!("{kind}:{host}:{user}"))?.set_password(&tok).map_err(kstore)?;
     Ok(Account { avatar: opt(&me["avatar_url"]), kind, host, user })
 }
 
@@ -263,11 +343,19 @@ pub async fn forge_login(kind: String, host: String, token: String) -> Result<Ac
 }
 
 #[tauri::command]
-pub fn forge_logout(kind: String, host: String) -> Result<(), String> {
+pub fn forge_logout(app: AppHandle, kind: String, host: String, user: String) -> Result<(), String> {
     check_kind(&kind)?;
-    match entry(&kind, &norm_host(&host)?)?.delete_credential() {
+    let host = norm_host(&host)?;
+    // Kein neuer Eintrag: alten ohne user nur loeschen, wenn er diesem Konto gehoert.
+    let res = match entry(&format!("{kind}:{host}:{user}"))?.delete_credential() {
+        Err(keyring::Error::NoEntry) if owns_legacy(&known(&app), &kind, &host, &user) => {
+            entry(&format!("{kind}:{host}"))?.delete_credential()
+        }
+        r => r,
+    };
+    match res {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("Anmeldeinfo-Speicher: {e}")),
+        Err(e) => Err(kstore(e)),
     }
 }
 
@@ -295,10 +383,24 @@ pub async fn forge_import_cli(kind: String, host: String) -> Result<Account, Str
 }
 
 #[tauri::command]
-pub async fn forge_repos(kind: String, host: String, query: String, page: u32) -> Result<Vec<RemoteRepo>, String> {
+pub async fn forge_repos(
+    app: AppHandle,
+    kind: String,
+    host: String,
+    user: Option<String>,
+    query: String,
+    page: u32,
+) -> Result<Vec<RemoteRepo>, String> {
     check_kind(&kind)?;
     let host = norm_host(&host)?;
-    let tok = token(&kind, &host)?.ok_or_else(|| format!("Kein Konto für {host}"))?;
+    // Ohne user (aelteres Frontend): erstes bekanntes Konto dieser Art fuer den Host.
+    let known = known(&app);
+    let user = user.or_else(|| known.iter().find(|(k, h, _)| *k == kind && *h == host).map(|(_, _, u)| u.clone()));
+    let tok = match user {
+        Some(u) => token(&kind, &host, &u, &known)?,
+        None => None,
+    };
+    let tok = tok.ok_or_else(|| format!("Kein Konto für {host}"))?;
     let page = page.max(1).to_string();
     let q = query.trim().to_string();
     let per = ("per_page", "50".to_string());
@@ -432,25 +534,30 @@ impl Repo {
     }
 }
 
-/// None = Remote nicht parsebar oder kein Konto fuer den Host.
-fn resolve(remote_url: &str) -> Result<Option<Repo>, String> {
+/// None = Remote nicht parsebar oder kein Konto fuer den Host. Konto: ocui.account des Repos, sonst pick.
+fn resolve(app: &AppHandle, repo: &str, remote_url: &str) -> Result<Option<Repo>, String> {
     let Some((host, path)) = parse_remote(remote_url) else {
         return Ok(None);
     };
-    Ok(token_for_host(&host)?.map(|(kind, tok)| {
+    let explicit = crate::git::config(repo, "ocui.account");
+    let known = known(app);
+    let Some((kind, host, user)) = pick(explicit.as_deref(), &host, &known) else {
+        return Ok(None);
+    };
+    Ok(token(kind, &host, &user, &known)?.map(|tok| {
         let base = if kind == "github" { format!("/repos/{path}") } else { format!("/projects/{}", encode(&path)) };
         Repo { kind, host, base, tok }
     }))
 }
 
 /// Fuer Schreibzugriffe: ohne Konto ist das ein Fehler, kein leeres Ergebnis.
-fn require(remote_url: &str) -> Result<Repo, String> {
-    resolve(remote_url)?.ok_or_else(|| "Kein Konto für dieses Remote-Repository hinterlegt".to_string())
+fn require(app: &AppHandle, repo: &str, remote_url: &str) -> Result<Repo, String> {
+    resolve(app, repo, remote_url)?.ok_or_else(|| "Kein Konto für dieses Remote-Repository hinterlegt".to_string())
 }
 
 #[tauri::command]
-pub async fn forge_pulls(remote_url: String) -> Result<Vec<PullRequest>, String> {
-    let Some(repo) = resolve(&remote_url)? else {
+pub async fn forge_pulls(app: AppHandle, repo: String, remote_url: String) -> Result<Vec<PullRequest>, String> {
+    let Some(repo) = resolve(&app, &repo, &remote_url)? else {
         return Ok(Vec::new());
     };
     let per = ("per_page", "50".to_string());
@@ -682,8 +789,8 @@ fn release_path(repo: &Repo, id: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn forge_releases(remote_url: String, page: u32) -> Result<Option<ForgeList<Release>>, String> {
-    let Some(repo) = resolve(&remote_url)? else {
+pub async fn forge_releases(app: AppHandle, repo: String, remote_url: String, page: u32) -> Result<Option<ForgeList<Release>>, String> {
+    let Some(repo) = resolve(&app, &repo, &remote_url)? else {
         return Ok(None);
     };
     let body = repo.get("/releases", &page_qs(page)).await?;
@@ -692,9 +799,15 @@ pub async fn forge_releases(remote_url: String, page: u32) -> Result<Option<Forg
 }
 
 #[tauri::command]
-pub async fn forge_release_save(remote_url: String, id: Option<String>, input: ReleaseInput) -> Result<Release, String> {
+pub async fn forge_release_save(
+    app: AppHandle,
+    repo: String,
+    remote_url: String,
+    id: Option<String>,
+    input: ReleaseInput,
+) -> Result<Release, String> {
     use reqwest::Method;
-    let repo = require(&remote_url)?;
+    let repo = require(&app, &repo, &remote_url)?;
     let target = input.target.as_deref().map(str::trim).filter(|t| !t.is_empty());
     if repo.github() {
         let mut body = serde_json::json!({
@@ -733,15 +846,21 @@ pub async fn forge_release_save(remote_url: String, id: Option<String>, input: R
 }
 
 #[tauri::command]
-pub async fn forge_release_delete(remote_url: String, id: String) -> Result<(), String> {
-    let repo = require(&remote_url)?;
+pub async fn forge_release_delete(app: AppHandle, repo: String, remote_url: String, id: String) -> Result<(), String> {
+    let repo = require(&app, &repo, &remote_url)?;
     repo.call(reqwest::Method::DELETE, &release_path(&repo, &id)?, &[], None).await?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn forge_runs(remote_url: String, branch: String, page: u32) -> Result<Option<ForgeList<Run>>, String> {
-    let Some(repo) = resolve(&remote_url)? else {
+pub async fn forge_runs(
+    app: AppHandle,
+    repo: String,
+    remote_url: String,
+    branch: String,
+    page: u32,
+) -> Result<Option<ForgeList<Run>>, String> {
+    let Some(repo) = resolve(&app, &repo, &remote_url)? else {
         return Ok(None);
     };
     let mut qs = page_qs(page);
@@ -763,8 +882,8 @@ pub async fn forge_runs(remote_url: String, branch: String, page: u32) -> Result
 }
 
 #[tauri::command]
-pub async fn forge_jobs(remote_url: String, run_id: u64) -> Result<Vec<Job>, String> {
-    let repo = require(&remote_url)?;
+pub async fn forge_jobs(app: AppHandle, repo: String, remote_url: String, run_id: u64) -> Result<Vec<Job>, String> {
+    let repo = require(&app, &repo, &remote_url)?;
     let qs = [("per_page", "100".to_string())];
     if repo.github() {
         let body = repo.get(&format!("/actions/runs/{run_id}/jobs"), &qs).await?;
@@ -783,17 +902,38 @@ fn parse_percent(line: &str) -> Option<u8> {
 }
 
 #[tauri::command]
-pub async fn forge_clone(app: AppHandle, id: String, url: String, dest: String) -> Result<String, String> {
+pub async fn forge_clone(
+    app: AppHandle,
+    id: String,
+    url: String,
+    dest: String,
+    account: Option<String>,
+) -> Result<String, String> {
+    let url = url.trim().to_string();
+    // HTTPS mit Konto: Header nur fuer diesen Aufruf und nur fuer diesen Host.
+    let known = known(&app);
+    let acc = parse_remote(&url)
+        .filter(|_| url.starts_with("https://"))
+        .and_then(|(host, _)| pick(account.as_deref(), &host, &known));
+    let auth = match acc {
+        Some((kind, host, user)) => token(kind, &host, &user, &known)?.map(|t| auth_env(kind, &host, &t)),
+        None => None,
+    };
     let event = format!("clone:{id}");
     let emit = move |p: CloneProgress| {
         let _ = app.emit(&event, p);
     };
-    tauri::async_runtime::spawn_blocking(move || clone_blocking(url, dest, emit))
+    tauri::async_runtime::spawn_blocking(move || clone_blocking(url, dest, auth, emit))
         .await
         .map_err(|e| format!("Klonen abgebrochen: {e}"))?
 }
 
-fn clone_blocking(url: String, dest: String, emit: impl Fn(CloneProgress)) -> Result<String, String> {
+fn clone_blocking(
+    url: String,
+    dest: String,
+    auth: Option<[(String, String); 3]>,
+    emit: impl Fn(CloneProgress),
+) -> Result<String, String> {
     let url = url.trim().to_string();
     if url.is_empty() || url.starts_with('-') {
         return Err(format!("Ungültige URL: {url}"));
@@ -811,18 +951,7 @@ fn clone_blocking(url: String, dest: String, emit: impl Fn(CloneProgress)) -> Re
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
-    // HTTPS mit Konto: Header nur fuer diesen Aufruf und nur fuer diesen Host, per Env statt argv.
-    if url.starts_with("https://") {
-        if let Some((host, _)) = parse_remote(&url) {
-            if let Some((kind, tok)) = token_for_host(&host)? {
-                let user = if kind == "github" { "x-access-token" } else { "oauth2" };
-                let basic = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{tok}"));
-                cmd.env("GIT_CONFIG_COUNT", "1")
-                    .env("GIT_CONFIG_KEY_0", format!("http.https://{host}/.extraHeader"))
-                    .env("GIT_CONFIG_VALUE_0", format!("Authorization: Basic {basic}"));
-            }
-        }
-    }
+    cmd.envs(auth.into_iter().flatten());
 
     let mut child = cmd.spawn().map_err(|e| format!("git nicht startbar: {e}"))?;
     let mut err = child.stderr.take().ok_or("stderr fehlt")?;
@@ -859,6 +988,53 @@ fn clone_blocking(url: String, dest: String, emit: impl Fn(CloneProgress)) -> Re
         return Err(if msg.is_empty() { "Klonen fehlgeschlagen".into() } else { msg });
     }
     Ok(dest)
+}
+
+/// Commit-Identitaet aus GET /user; ohne oeffentliche Mail die noreply-Adresse bzw. Profil-Mails.
+fn identity(kind: &str, me: &Value) -> (String, String) {
+    if kind == "github" {
+        let login = s(&me["login"]);
+        let name = opt(&me["name"]).unwrap_or_else(|| login.clone());
+        let email = opt(&me["email"])
+            .unwrap_or_else(|| format!("{}+{login}@users.noreply.github.com", me["id"].as_u64().unwrap_or(0)));
+        return (name, email);
+    }
+    let name = opt(&me["name"]).unwrap_or_else(|| s(&me["username"]));
+    let email = ["commit_email", "public_email", "email"].iter().find_map(|k| opt(&me[*k])).unwrap_or_default();
+    (name, email)
+}
+
+fn repo_account(app: &AppHandle, repo: &str) -> RepoAccount {
+    use crate::git::config;
+    let account = config(repo, "ocui.account");
+    let host = config(repo, "remote.origin.url").and_then(|u| parse_remote(&u)).map(|(h, _)| h);
+    let effective = host
+        .as_deref()
+        .and_then(|h| pick(account.as_deref(), h, &known(app)))
+        .map(|(k, h, u)| format!("{k}:{h}:{u}"));
+    RepoAccount { account, effective, host, name: config(repo, "user.name"), email: config(repo, "user.email") }
+}
+
+#[tauri::command]
+pub async fn forge_repo_account(app: AppHandle, repo: String) -> Result<RepoAccount, String> {
+    Ok(repo_account(&app, &repo))
+}
+
+/// Some: Konto fest ans Repo binden und Commit-Identitaet setzen. None: zurueck auf System-Git.
+#[tauri::command]
+pub async fn forge_set_repo_account(app: AppHandle, repo: String, account: Option<String>) -> Result<RepoAccount, String> {
+    match account {
+        Some(id) => {
+            let (kind, host, user) = parse_account(&id).ok_or_else(|| format!("Ungültiges Konto: {id}"))?;
+            let id = format!("{kind}:{host}:{user}");
+            let tok = token(kind, &host, &user, &known(&app))?.ok_or_else(|| format!("Kein Token für {id}"))?;
+            let me = api_get(kind, &host, &tok, "/user", &[]).await?;
+            let (name, email) = identity(kind, &me);
+            crate::git::apply_identity(&repo, &id, &name, &email)?;
+        }
+        None => crate::git::clear_identity(&repo),
+    }
+    Ok(repo_account(&app, &repo))
 }
 
 /// Nur http(s): sonst koennte explorer/open/xdg-open beliebige Programme oder Pfade oeffnen.
@@ -1083,6 +1259,162 @@ mod tests {
         assert_eq!(release_path(&repo("gitlab"), "v1.0/../x").unwrap(), "/releases/v1.0%2F..%2Fx");
     }
 
+    fn acc(k: &'static str, h: &str, u: &str) -> Option<(&'static str, String, String)> {
+        Some((k, h.into(), u.into()))
+    }
+
+    #[test]
+    fn parst_konto_ids() {
+        assert_eq!(parse_account("github:github.com:octocat"), acc("github", "github.com", "octocat"));
+        assert_eq!(parse_account("gitlab:GitLab.firma.de:8443:ich"), acc("gitlab", "gitlab.firma.de:8443", "ich"));
+        assert_eq!(parse_account("gitea:x.de:u"), None);
+        assert_eq!(parse_account("github:github.com:"), None);
+        assert_eq!(parse_account("github:octocat"), None);
+        assert_eq!(parse_account("github:evil.com/x:u"), None);
+        assert_eq!(parse_account(""), None);
+    }
+
+    #[test]
+    fn alter_token_nur_fuer_ersten_bekannten() {
+        let k = |kind: &str, h: &str, u: &str| (kind.to_string(), h.to_string(), u.to_string());
+        let known = [k("gitlab", "github.com", "gl"), k("github", "github.com", "alt"), k("github", "github.com", "neu")];
+        assert!(owns_legacy(&known, "github", "github.com", "alt"));
+        assert!(!owns_legacy(&known, "github", "github.com", "neu"));
+        assert!(!owns_legacy(&known, "github", "github.com", "fremd"));
+        assert!(owns_legacy(&known, "gitlab", "github.com", "gl"));
+        assert!(!owns_legacy(&[], "github", "github.com", "alt"));
+    }
+
+    #[test]
+    fn waehlt_konto() {
+        let k = |kind: &str, h: &str, u: &str| (kind.to_string(), h.to_string(), u.to_string());
+        let known = [k("gitlab", "github.com", "gl"), k("github", "gitlab.com", "x"), k("github", "github.com", "a"), k("github", "github.com", "b")];
+        // Explizit gilt nur fuer den passenden Host, auch wenn es nicht in der Liste steht.
+        assert_eq!(pick(Some("github:github.com:b"), "github.com", &known), acc("github", "github.com", "b"));
+        assert_eq!(pick(Some("github:github.com:neu"), "github.com", &known), acc("github", "github.com", "neu"));
+        assert_eq!(pick(Some("github:ghe.de:b"), "github.com", &known), acc("github", "github.com", "a"));
+        assert_eq!(pick(Some("kaputt"), "github.com", &known), acc("github", "github.com", "a"));
+        // GitHub vor GitLab, dann Listenreihenfolge.
+        assert_eq!(pick(None, "github.com", &known), acc("github", "github.com", "a"));
+        assert_eq!(pick(None, "gitlab.com", &known), acc("github", "gitlab.com", "x"));
+        assert_eq!(pick(None, "gitlab.firma.de", &known), None);
+        assert_eq!(pick(None, "github.com", &[k("github", "github.com", "")]), None);
+    }
+
+    #[test]
+    fn identitaet_aus_profil() {
+        let gh = json!({"login": "octo", "id": 42, "name": null, "email": null});
+        assert_eq!(identity("github", &gh), ("octo".into(), "42+octo@users.noreply.github.com".into()));
+        let gh = json!({"login": "octo", "id": 42, "name": "Octo Cat", "email": "o@c.de"});
+        assert_eq!(identity("github", &gh), ("Octo Cat".into(), "o@c.de".into()));
+        let gl = json!({"username": "ich", "name": "", "commit_email": "", "public_email": "p@x.de", "email": "e@x.de"});
+        assert_eq!(identity("gitlab", &gl), ("ich".into(), "p@x.de".into()));
+        let gl = json!({"username": "ich", "name": "Ich", "commit_email": "c@x.de", "email": "e@x.de"});
+        assert_eq!(identity("gitlab", &gl), ("Ich".into(), "c@x.de".into()));
+        assert_eq!(identity("gitlab", &json!({"username": "ich", "email": "e@x.de"})).1, "e@x.de");
+    }
+
+    #[test]
+    fn auth_header_pro_host() {
+        let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
+        let [c, k, v] = auth_env("github", "github.com", "T0K");
+        assert_eq!(c, ("GIT_CONFIG_COUNT".into(), "1".into()));
+        assert_eq!(k.1, "http.https://github.com/.extraHeader");
+        assert_eq!(v.1, format!("Authorization: Basic {}", b64("x-access-token:T0K")));
+        let [_, k, v] = auth_env("gitlab", "gitlab.firma.de:8443", "T0K");
+        assert_eq!(k.1, "http.https://gitlab.firma.de:8443/.extraHeader");
+        assert_eq!(v.1, format!("Authorization: Basic {}", b64("oauth2:T0K")));
+    }
+
+    #[test]
+    fn konto_ids_grenzfaelle() {
+        assert_eq!(parse_account("gitlab:gitlab.com:ich"), acc("gitlab", "gitlab.com", "ich"));
+        assert_eq!(parse_account("GitHub:github.com:octo"), None);
+        assert_eq!(parse_account("github:github.com"), None);
+        assert_eq!(parse_account("github::octo"), None);
+        assert_eq!(parse_account("github:a b:octo"), None);
+        assert_eq!(parse_account(":::"), None);
+        assert_eq!(parse_account("github"), None);
+    }
+
+    #[test]
+    fn waehlt_konto_mit_mockliste() {
+        let k = |kind: &str, h: &str, u: &str| (kind.to_string(), h.to_string(), u.to_string());
+        let known = [k("gitlab", "gitlab.com", "g1"), k("gitlab", "gitlab.com", "g2"), k("github", "ghe.de:8443", "p")];
+        assert_eq!(pick(Some("gitlab:gitlab.com:g2"), "gitlab.com", &known), acc("gitlab", "gitlab.com", "g2"));
+        assert_eq!(pick(Some("gitlab:gitlab.com:"), "gitlab.com", &known), acc("gitlab", "gitlab.com", "g1"));
+        assert_eq!(pick(Some("github:ghe.de:8443:q"), "ghe.de:8443", &known), acc("github", "ghe.de:8443", "q"));
+        // Port gehoert zum Host: ohne Port kein Treffer.
+        assert_eq!(pick(None, "ghe.de", &known), None);
+        assert_eq!(pick(Some("github:github.com:x"), "gitlab.firma.de", &[]), None);
+    }
+
+    #[test]
+    fn identitaet_weitere_profile() {
+        let gh = json!({"login": "octo", "id": 7, "name": "Octo", "email": ""});
+        assert_eq!(identity("github", &gh), ("Octo".into(), "7+octo@users.noreply.github.com".into()));
+        let gh = json!({"login": "octo", "id": 7, "name": "", "email": "o@c.de"});
+        assert_eq!(identity("github", &gh), ("octo".into(), "o@c.de".into()));
+        let gl = json!({"username": "ich", "commit_email": null, "public_email": "", "email": "e@x.de"});
+        assert_eq!(identity("gitlab", &gl), ("ich".into(), "e@x.de".into()));
+        assert_eq!(identity("gitlab", &json!({"username": "ich"})), ("ich".into(), String::new()));
+    }
+
+    /// Mock-Server: nimmt eine Verbindung an, antwortet 404 und liefert den Request-Kopf.
+    fn mock_http() -> (u16, std::sync::mpsc::Receiver<String>) {
+        use std::io::Write;
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let Ok((mut c, _)) = l.accept() else { return };
+            c.set_read_timeout(Some(Duration::from_secs(5))).ok();
+            let mut req = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                match c.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => req.extend_from_slice(&buf[..n]),
+                }
+            }
+            let _ = c.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            let _ = tx.send(String::from_utf8_lossy(&req).into_owned());
+        });
+        (port, rx)
+    }
+
+    /// auth_env fuer http auf 127.0.0.1 umgebogen; Wert und Host-Bindung bleiben wie in Produktion.
+    fn http_auth(kind: &str, host: &str, tok: &str) -> [(String, String); 3] {
+        let mut env = auth_env(kind, host, tok);
+        env[1].1 = env[1].1.replacen("http.https://", "http.http://", 1);
+        env
+    }
+
+    #[test]
+    fn clone_schickt_auth_header_nur_an_seinen_host() {
+        let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
+        let tok = "geheimT0K3n";
+        let (port, rx) = mock_http();
+        let root = tmp("auth");
+        let auth = http_auth("gitlab", &format!("127.0.0.1:{port}"), tok);
+        let url = format!("http://127.0.0.1:{port}/x.git");
+        let err = clone_blocking(url, root.join("a").to_string_lossy().into(), Some(auth), |_| {}).unwrap_err();
+        let req = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(req.contains(&format!("Authorization: Basic {}", b64(&format!("oauth2:{tok}")))), "{req}");
+        assert!(!err.contains(tok) && !err.contains(&b64(&format!("oauth2:{tok}"))), "{err}");
+
+        // Header fuer anderen Port darf nicht mitgeschickt werden.
+        let (other, rx) = mock_http();
+        let auth = http_auth("github", &format!("127.0.0.1:{port}"), tok);
+        let url = format!("http://127.0.0.1:{other}/x.git");
+        let err = clone_blocking(url, root.join("b").to_string_lossy().into(), Some(auth), |_| {}).unwrap_err();
+        let req = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(req.starts_with("GET /x.git/info/refs"), "{req}");
+        assert!(!req.to_ascii_lowercase().contains("authorization"), "{req}");
+        assert!(!err.contains(tok), "{err}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     fn tmp(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("ocui-forge-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -1111,23 +1443,23 @@ mod tests {
         std::fs::create_dir_all(&empty).unwrap();
         let lines = std::sync::Mutex::new(Vec::new());
         let dest = empty.display().to_string();
-        let r = clone_blocking(url.clone(), dest.clone(), |p| lines.lock().unwrap().push((p.line, p.percent)));
+        let r = clone_blocking(url.clone(), dest.clone(), None, |p| lines.lock().unwrap().push((p.line, p.percent)));
         assert_eq!(r, Ok(dest));
         assert!(empty.join("a.txt").is_file());
         assert!(!lines.lock().unwrap().is_empty());
 
         // Nicht leer -> Fehler, kein git-Aufruf.
-        let r = clone_blocking(url.clone(), empty.display().to_string(), |_| {});
+        let r = clone_blocking(url.clone(), empty.display().to_string(), None, |_| {});
         assert!(r.unwrap_err().contains("nicht leer"));
         // Ziel ist eine Datei.
         let file = root.join("datei");
         std::fs::write(&file, "x").unwrap();
-        assert!(clone_blocking(url.clone(), file.display().to_string(), |_| {}).is_err());
+        assert!(clone_blocking(url.clone(), file.display().to_string(), None, |_| {}).is_err());
         // Option-Injection.
-        assert!(clone_blocking("--upload-pack=calc".into(), root.join("n").display().to_string(), |_| {}).is_err());
+        assert!(clone_blocking("--upload-pack=calc".into(), root.join("n").display().to_string(), None, |_| {}).is_err());
         // Nicht existierende Quelle: git-Meldung kommt durch, Ziel bleibt nicht zurueck.
         let bad = root.join("bad");
-        let e = clone_blocking(format!("{url}-fehlt"), bad.display().to_string(), |_| {}).unwrap_err();
+        let e = clone_blocking(format!("{url}-fehlt"), bad.display().to_string(), None, |_| {}).unwrap_err();
         assert!(e.contains("fatal") || e.contains("does not"), "{e}");
         assert!(!bad.exists());
         let _ = std::fs::remove_dir_all(&root);

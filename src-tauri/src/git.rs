@@ -118,6 +118,13 @@ fn git(repo: &str) -> Command {
     cmd
 }
 
+/// Fetch/Pull/Push: mit fest gewaehltem Konto (ocui.account) dessen Token, sonst System-Credential-Helper.
+fn net(repo: &str) -> Command {
+    let mut cmd = git(repo);
+    cmd.envs(crate::forge::repo_auth(repo).into_iter().flatten());
+    cmd
+}
+
 /// Fuer Nutzerpfade: keine Pathspec-Magie. Nicht global, stash nutzt intern selbst Magie.
 fn lit(repo: &str) -> Command {
     let mut cmd = git(repo);
@@ -719,7 +726,7 @@ fn branch_delete(repo: &str, name: &str, force: bool, remote: bool) -> Result<St
     if remote {
         let (r, branch) = split_remote(&remotes(repo)?, name)
             .ok_or_else(|| format!("Kein Remote zu „{name}“ gefunden"))?;
-        return talk(git(repo).args(["push", "--delete", "--", r.as_str(), branch]));
+        return talk(net(repo).args(["push", "--delete", "--", r.as_str(), branch]));
     }
     talk(git(repo).args(["branch", if force { "-D" } else { "-d" }, name]))
 }
@@ -769,7 +776,7 @@ fn pick(repo: &str, op: &str, sha: &str) -> Result<String, String> {
 
 fn push(repo: &str, force: bool) -> Result<String, String> {
     let st = status(repo)?;
-    let mut cmd = git(repo);
+    let mut cmd = net(repo);
     cmd.arg("push");
     if force {
         cmd.arg("--force-with-lease");
@@ -787,12 +794,41 @@ fn push(repo: &str, force: bool) -> Result<String, String> {
     talk(&mut cmd)
 }
 
-/// Pro Repo fest eingestellter Production-Branch (lokale git config), None = automatisch.
-fn configured_base(repo: &str) -> Option<String> {
-    out(git(repo).args(["config", "--get", "ocui.base"]))
+/// Wirksamer Wert (lokal oder global), None = nicht gesetzt oder leer.
+pub(crate) fn config(repo: &str, key: &str) -> Option<String> {
+    out(git(repo).args(["config", "--get", key]))
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// Pro Repo fest eingestellter Production-Branch (lokale git config), None = automatisch.
+fn configured_base(repo: &str) -> Option<String> {
+    config(repo, "ocui.base")
+}
+
+/// Konto fest ans Repo binden, Commits laufen dann unter dessen Identitaet.
+pub(crate) fn apply_identity(repo: &str, id: &str, name: &str, email: &str) -> Result<(), String> {
+    for (k, v) in [("user.name", name), ("user.email", email), ("ocui.account", id)] {
+        if v.is_empty() {
+            // Leere Mail (GitLab ohne sichtbare Adresse): globale greift, alte gebundene weg.
+            let _ = out(git(repo).args(["config", "--local", "--unset", k]));
+            continue;
+        }
+        // "--": Namen mit fuehrendem "-" sind sonst Optionen.
+        out(git(repo).args(["config", "--local", "--", k, v]))?;
+    }
+    Ok(())
+}
+
+/// Nur wenn ein Konto gebunden war: sonst gehoert user.name/email dem Nutzer.
+pub(crate) fn clear_identity(repo: &str) {
+    if !ok(git(repo).args(["config", "--local", "--get", "ocui.account"])) {
+        return;
+    }
+    for k in ["ocui.account", "user.name", "user.email"] {
+        let _ = out(git(repo).args(["config", "--local", "--unset", k]));
+    }
 }
 
 fn set_base(repo: &str, base: Option<&str>) -> Result<(), String> {
@@ -1163,14 +1199,14 @@ pub async fn git_reset(repo: String, sha: String, mode: String) -> Result<String
 
 #[tauri::command]
 pub async fn git_fetch(repo: String) -> Result<String, String> {
-    blocking(move || talk(git(&repo).args(["fetch", "--all", "--prune"]))).await
+    blocking(move || talk(net(&repo).args(["fetch", "--all", "--prune"]))).await
 }
 
 #[tauri::command]
 pub async fn git_pull(repo: String, rebase: bool) -> Result<String, String> {
     blocking(move || {
         let mode = if rebase { "--rebase" } else { "--no-rebase" };
-        tolerate(&repo, git(&repo).args(["pull", mode]))
+        tolerate(&repo, net(&repo).args(["pull", mode]))
     })
     .await
 }
@@ -2241,6 +2277,48 @@ refs/remotes/origin/feature/x\x1f \x1f\x1f\x1fs3\x1fd\x1fsub: mit doppelpunkt\n"
         talk(git(&r).args(["fetch", "--all", "--prune"])).unwrap();
         assert!(!branches(&r).unwrap().iter().any(|b| b.name == "origin/team/x/y"));
         assert!(branch_delete(&r, "team/x/y", false, false).is_ok());
+    }
+
+    #[test]
+    fn m_konto_identitaet() {
+        let (_t, r) = fresh("konto");
+        // Ohne gebundenes Konto bleibt eigene Identitaet unangetastet.
+        clear_identity(&r);
+        assert_eq!(config(&r, "user.name").as_deref(), Some("Test"));
+        assert!(!net(&r).get_envs().any(|(k, _)| k == "GIT_CONFIG_COUNT"));
+        apply_identity(&r, "github:github.com:octo", "-Octo Cat", "1+octo@users.noreply.github.com").unwrap();
+        assert_eq!(config(&r, "user.name").as_deref(), Some("-Octo Cat"));
+        assert_eq!(config(&r, "user.email").as_deref(), Some("1+octo@users.noreply.github.com"));
+        assert_eq!(config(&r, "ocui.account").as_deref(), Some("github:github.com:octo"));
+        clear_identity(&r);
+        for k in ["ocui.account", "user.name", "user.email"] {
+            assert!(!ok(git(&r).args(["config", "--local", "--get", k])), "{k}");
+        }
+        // Zweimal entfernen schadet nicht.
+        clear_identity(&r);
+        assert_eq!(config(&r, "ocui.base"), None);
+    }
+
+    #[test]
+    fn m_konto_manuelle_identitaet_bleibt() {
+        let (_t, r) = fresh("konto-manuell");
+        out(git(&r).args(["config", "--local", "user.name", "Handgesetzt"])).unwrap();
+        out(git(&r).args(["config", "--local", "user.email", "h@x.de"])).unwrap();
+        clear_identity(&r);
+        assert_eq!(config(&r, "user.name").as_deref(), Some("Handgesetzt"));
+        assert_eq!(config(&r, "user.email").as_deref(), Some("h@x.de"));
+        // Ungueltige/leere Konto-ID: kein Token-Lookup, keine Env.
+        for id in ["kaputt", "github:github.com:"] {
+            out(git(&r).args(["config", "--local", "ocui.account", id])).unwrap();
+            assert!(!net(&r).get_envs().any(|(k, _)| k.to_str().is_some_and(|k| k.starts_with("GIT_CONFIG_"))), "{id}");
+        }
+        // Konto ueberschreibt, Entfernen raeumt alles weg.
+        apply_identity(&r, "gitlab:gitlab.firma.de:8443:ich", "Ich", "c@x.de").unwrap();
+        assert_eq!(config(&r, "user.name").as_deref(), Some("Ich"));
+        apply_identity(&r, "gitlab:gitlab.firma.de:8443:ich", "Ich", "").unwrap();
+        assert!(!ok(git(&r).args(["config", "--local", "--get", "user.email"])));
+        clear_identity(&r);
+        assert!(!ok(git(&r).args(["config", "--local", "--get", "user.name"])));
     }
 
     #[test]

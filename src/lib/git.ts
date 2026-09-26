@@ -153,6 +153,22 @@ export type ForgeKind = "github" | "gitlab";
 /** Token liegt im Windows-Anmeldeinfo-Speicher, nie im Store. */
 export type Account = { kind: ForgeKind; host: string; user: string; avatar: string | null };
 
+/** Konto-ID "kind:host:user", z. B. "github:github.com:octocat" (host darf einen Port enthalten). */
+export const accountId = (a: Account) => `${a.kind}:${a.host}:${a.user}`;
+
+/** Konto eines lokalen Repos (git config ocui.account) und die daraus folgende Commit-Identitaet. */
+export type RepoAccount = {
+  /** Explizit gesetzte Konto-ID; null = automatisch. */
+  account: string | null;
+  /** Konto, das API-Aufrufe nutzen (explizit oder erstes passendes); null = keins. */
+  effective: string | null;
+  /** Host des origin-Remotes. */
+  host: string | null;
+  /** Effektives user.name / user.email (lokal oder global). */
+  name: string | null;
+  email: string | null;
+};
+
 export type RemoteRepo = {
   kind: ForgeKind;
   host: string;
@@ -251,29 +267,35 @@ export const forge = {
   /** Prueft den Token gegen die API und legt ihn ab. host z. B. "github.com", "gitlab.firma.de". */
   login: (kind: ForgeKind, host: string, token: string) =>
     call<Account>("forge_login", { kind, host, token }),
-  logout: (kind: ForgeKind, host: string) => call<void>("forge_logout", { kind, host }),
+  logout: (kind: ForgeKind, host: string, user: string) => call<void>("forge_logout", { kind, host, user }),
   /** Token aus `gh auth token` (GitHub) bzw. `glab auth token` uebernehmen, falls installiert. */
   importCli: (kind: ForgeKind, host: string) => call<Account>("forge_import_cli", { kind, host }),
   /** query leer = eigene Repos (zuletzt aktiv zuerst), sonst Suche. page ab 1. */
-  repos: (kind: ForgeKind, host: string, query: string, page: number) =>
-    call<RemoteRepo[]>("forge_repos", { kind, host, query, page }),
+  repos: (kind: ForgeKind, host: string, user: string, query: string, page: number) =>
+    call<RemoteRepo[]>("forge_repos", { kind, host, user, query, page }),
   /** Offene PRs/MRs zum Remote-URL eines lokalen Repos; leer, wenn kein passendes Konto. */
-  pulls: (remoteUrl: string) => call<PullRequest[]>("forge_pulls", { remoteUrl }),
+  pulls: (repo: string, remoteUrl: string) => call<PullRequest[]>("forge_pulls", { repo, remoteUrl }),
   /** Releases, neueste zuerst (GitHub inkl. Drafts, wenn der Token Schreibrechte hat). page ab 1, 30 pro Seite. */
-  releases: (remoteUrl: string, page: number) =>
-    call<ForgeList<Release>>("forge_releases", { remoteUrl, page }),
+  releases: (repo: string, remoteUrl: string, page: number) =>
+    call<ForgeList<Release>>("forge_releases", { repo, remoteUrl, page }),
   /** id null = neu anlegen, sonst bearbeiten (GitHub: ID, GitLab: Tag). Liefert den gespeicherten Stand. */
-  releaseSave: (remoteUrl: string, id: string | null, input: ReleaseInput) =>
-    call<Release>("forge_release_save", { remoteUrl, id, input }),
+  releaseSave: (repo: string, remoteUrl: string, id: string | null, input: ReleaseInput) =>
+    call<Release>("forge_release_save", { repo, remoteUrl, id, input }),
   /** Loescht nur das Release, der Git-Tag bleibt. */
-  releaseDelete: (remoteUrl: string, id: string) => call<void>("forge_release_delete", { remoteUrl, id }),
+  releaseDelete: (repo: string, remoteUrl: string, id: string) =>
+    call<void>("forge_release_delete", { repo, remoteUrl, id }),
   /** Workflow-Runs bzw. Pipelines, neueste zuerst. branch leer = alle. page ab 1, 30 pro Seite. */
-  runs: (remoteUrl: string, branch: string, page: number) =>
-    call<ForgeList<Run>>("forge_runs", { remoteUrl, branch, page }),
+  runs: (repo: string, remoteUrl: string, branch: string, page: number) =>
+    call<ForgeList<Run>>("forge_runs", { repo, remoteUrl, branch, page }),
   /** Jobs eines Runs bzw. einer Pipeline. */
-  jobs: (remoteUrl: string, runId: number) => call<Job[]>("forge_jobs", { remoteUrl, runId }),
-  /** Klont nach dest; Fortschritt als Event `clone:{id}` (CloneProgress). Liefert den Zielpfad. */
-  clone: (id: string, url: string, dest: string) => call<string>("forge_clone", { id, url, dest }),
+  jobs: (repo: string, remoteUrl: string, runId: number) => call<Job[]>("forge_jobs", { repo, remoteUrl, runId }),
+  repoAccount: (repo: string) => call<RepoAccount>("forge_repo_account", { repo }),
+  /** Konto fuer das Repo festlegen und user.name/user.email lokal daraus setzen; null = zurueck auf System-Git. */
+  setRepoAccount: (repo: string, account: string | null) =>
+    call<RepoAccount>("forge_set_repo_account", { repo, account }),
+  /** Klont nach dest; Fortschritt als Event `clone:{id}` (CloneProgress). Liefert den Zielpfad. account = Konto-ID fuer den Token. */
+  clone: (id: string, url: string, dest: string, account: string | null) =>
+    call<string>("forge_clone", { id, url, dest, account }),
   /** Oeffnet eine URL im Standardbrowser. */
   openUrl: (url: string) => call<void>("open_url", { url }),
   /** Browser-URL zu einem Remote (ssh/scp -> https); null, wenn nicht erkennbar. */

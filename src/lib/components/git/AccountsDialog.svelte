@@ -31,7 +31,7 @@
   const tokenUrl = $derived(
     kind === "github"
       ? `https://${bare}/settings/tokens/new?scopes=repo,read:org&description=ocui`
-      : `https://${bare}/-/user_settings/personal_access_tokens?name=ocui&scopes=read_api,read_repository`,
+      : `https://${bare}/-/user_settings/personal_access_tokens?name=ocui&scopes=read_api,read_repository,write_repository`,
   );
 
   async function persist(next: Account[]) {
@@ -39,9 +39,10 @@
     await store.set("accounts", accounts);
   }
 
+  const same = (x: Account, a: Account) => x.kind === a.kind && x.host === a.host && x.user === a.user;
+
   function upsert(list: Account[], a: Account): Account[] {
-    const rest = list.filter((x) => !(x.kind === a.kind && x.host === a.host));
-    return [...rest, a];
+    return [...list.filter((x) => !same(x, a)), a];
   }
 
   async function login() {
@@ -75,8 +76,8 @@
     busy = true;
     error = "";
     try {
-      await forge.logout(a.kind, a.host);
-      await persist(accounts.filter((x) => !(x.kind === a.kind && x.host === a.host)));
+      await forge.logout(a.kind, a.host, a.user);
+      await persist(accounts.filter((x) => !same(x, a)));
     } catch (e) {
       error = String(e);
     }
@@ -88,7 +89,7 @@
   <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
       <Dialog.Title>Konten</Dialog.Title>
-      <Dialog.Description>GitHub- und GitLab-Zugänge für Klonen und Pull Requests.</Dialog.Description>
+      <Dialog.Description>GitHub- und GitLab-Zugänge für Klonen, Push/Pull und Pull Requests. Mehrere Konten pro Host möglich, pro Repo wählbar.</Dialog.Description>
     </Dialog.Header>
 
     {#if accounts.length}
@@ -143,7 +144,7 @@
       >
         <ExternalLinkIcon class="size-3" /> Token mit den nötigen Rechten erstellen ({kind === "github"
           ? "repo, read:org"
-          : "read_api, read_repository"})
+          : "read_api, read_repository, write_repository"})
       </button>
       {#if error}<p class="text-destructive text-xs">{error}</p>{/if}
       <div class="flex gap-1.5">

@@ -89,7 +89,7 @@
   }
 
   async function fetchPage(g: number) {
-    const res = await forge.runs(originUrl!, filter(), page + 1);
+    const res = await forge.runs(repo, originUrl!, filter(), page + 1);
     if (g !== gen) return;
     if (!res) {
       noAccount = true;
@@ -118,7 +118,7 @@
 
   async function loadJobs(id: number, g = gen) {
     try {
-      const list = await forge.jobs(originUrl!, id);
+      const list = await forge.jobs(repo, originUrl!, id);
       if (g !== gen) return;
       jobs[id] = list;
       delete jobErr[id];
@@ -139,7 +139,7 @@
     busy = true;
     try {
       const [res] = await Promise.all([
-        forge.runs(originUrl, filter(), 1),
+        forge.runs(repo, originUrl, filter(), 1),
         ...Object.keys(open).filter((id) => open[+id]).map((id) => loadJobs(+id, g)),
       ]);
       if (g !== gen || !res) return;

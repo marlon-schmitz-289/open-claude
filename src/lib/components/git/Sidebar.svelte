@@ -137,7 +137,7 @@
       tags = t;
       stashes = s;
       originUrl = remotes.find((r) => r.name === "origin")?.url ?? null;
-      pulls = originUrl ? await forge.pulls(originUrl).catch(() => []) : [];
+      pulls = originUrl ? await forge.pulls(repo, originUrl).catch(() => []) : [];
     } catch (e) {
       error = String(e);
     }

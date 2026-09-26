@@ -439,6 +439,8 @@ pub fn run() {
             forge::forge_runs,
             forge::forge_jobs,
             forge::forge_clone,
+            forge::forge_repo_account,
+            forge::forge_set_repo_account,
             forge::open_url,
             forge::forge_web_url,
             git::git_status,
