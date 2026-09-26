@@ -39,8 +39,10 @@
   let walkBuffer: AudioBuffer | null = null;
   let master: GainNode | null = null;
 
+  // volume zuerst lesen: master ist kein $state und beim ersten Lauf noch null, sonst trackt der Effect nichts.
   $effect(() => {
-    if (master) master.gain.value = volume;
+    const v = volume;
+    if (master) master.gain.value = v;
   });
 
   function onActivity() {
