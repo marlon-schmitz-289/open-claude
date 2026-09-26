@@ -894,6 +894,42 @@ pub async fn forge_jobs(app: AppHandle, repo: String, remote_url: String, run_id
     Ok(items(&body, gl_job))
 }
 
+/// API-Pfad fuer Neustart/Abbruch eines Runs bzw. Jobs. GitLab kennt nur "Fehlgeschlagene neu starten" (retry).
+fn run_action_path(github: bool, job: bool, id: u64, action: &str) -> Result<String, String> {
+    let sub = match (github, job, action) {
+        (true, _, "rerun") => "rerun",
+        (true, false, "rerun_failed") => "rerun-failed-jobs",
+        (true, false, "cancel") => "cancel",
+        (false, _, "rerun_failed") => "retry",
+        (false, true, "rerun") => "retry",
+        (false, _, "cancel") => "cancel",
+        _ => return Err(format!("Aktion nicht unterstützt: {action}")),
+    };
+    let what = match (github, job) {
+        (true, false) => "actions/runs",
+        (true, true) => "actions/jobs",
+        (false, false) => "pipelines",
+        (false, true) => "jobs",
+    };
+    Ok(format!("/{what}/{id}/{sub}"))
+}
+
+/// Run/Pipeline oder einzelnen Job neu starten bzw. abbrechen.
+#[tauri::command]
+pub async fn forge_run_action(
+    app: AppHandle,
+    repo: String,
+    remote_url: String,
+    id: u64,
+    job: bool,
+    action: String,
+) -> Result<(), String> {
+    let repo = require(&app, &repo, &remote_url)?;
+    let path = run_action_path(repo.github(), job, id, &action)?;
+    repo.call(reqwest::Method::POST, &path, &[], None).await?;
+    Ok(())
+}
+
 /// "Receiving objects:  45% (45/100)" -> 45.
 fn parse_percent(line: &str) -> Option<u8> {
     let head = &line[..line.find('%')?];
@@ -1064,6 +1100,23 @@ pub fn forge_web_url(remote_url: String) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn run_aktionen_pfade() {
+        let p = |gh, job, a| run_action_path(gh, job, 7, a);
+        assert_eq!(p(true, false, "rerun").unwrap(), "/actions/runs/7/rerun");
+        assert_eq!(p(true, false, "rerun_failed").unwrap(), "/actions/runs/7/rerun-failed-jobs");
+        assert_eq!(p(true, false, "cancel").unwrap(), "/actions/runs/7/cancel");
+        assert_eq!(p(true, true, "rerun").unwrap(), "/actions/jobs/7/rerun");
+        assert_eq!(p(false, false, "rerun_failed").unwrap(), "/pipelines/7/retry");
+        assert_eq!(p(false, false, "cancel").unwrap(), "/pipelines/7/cancel");
+        assert_eq!(p(false, true, "rerun").unwrap(), "/jobs/7/retry");
+        assert_eq!(p(false, true, "cancel").unwrap(), "/jobs/7/cancel");
+        // GitHub kann einzelne Jobs nicht abbrechen, GitLab Pipelines nicht komplett neu starten.
+        assert!(p(true, true, "cancel").is_err());
+        assert!(p(false, false, "rerun").is_err());
+        assert!(p(true, false, "../x").is_err());
+    }
 
     #[test]
     fn web_url_aus_remote() {

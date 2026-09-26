@@ -438,6 +438,7 @@ pub fn run() {
             forge::forge_release_delete,
             forge::forge_runs,
             forge::forge_jobs,
+            forge::forge_run_action,
             forge::forge_clone,
             forge::forge_repo_account,
             forge::forge_set_repo_account,

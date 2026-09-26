@@ -1,7 +1,7 @@
 <script lang="ts">
   import Notice from "$lib/components/Notice.svelte";
   import { age } from "$lib/utils";
-  import { git, forge, type ForgeKind, type Job, type Run, type RunStatus } from "$lib/git";
+  import { git, forge, type ForgeKind, type Job, type Run, type RunAction, type RunStatus } from "$lib/git";
   import CircleCheckIcon from "@lucide/svelte/icons/circle-check";
   import CircleXIcon from "@lucide/svelte/icons/circle-x";
   import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
@@ -11,6 +11,8 @@
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
+  import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
+  import SquareIcon from "@lucide/svelte/icons/square";
 
   let {
     repo,
@@ -127,6 +129,25 @@
     }
   }
 
+  const pending = (s: RunStatus) => s === "queued" || s === "running";
+  let acting = $state<string | null>(null);
+
+  /** Neustart/Abbruch; danach Liste und Jobs des Runs frisch holen. */
+  async function act(runId: number, id: number, job: boolean, action: RunAction) {
+    if (!originUrl || acting) return;
+    acting = `${job}:${id}`;
+    error = "";
+    try {
+      await forge.runAction(repo, originUrl, id, job, action);
+      await poll();
+      if (open[runId]) await loadJobs(runId);
+    } catch (e) {
+      error = String(e);
+    } finally {
+      acting = null;
+    }
+  }
+
   function toggle(r: Run) {
     open[r.id] = !open[r.id];
     if (open[r.id] && !jobs[r.id]) loadJobs(r.id);
@@ -175,6 +196,21 @@
 {#snippet statusIcon(s: RunStatus)}
   {@const [Icon, cls] = ICON[s]}
   <Icon class="size-3.5 shrink-0 {cls}" aria-label={s} />
+{/snippet}
+
+{#snippet action(title: string, onclick: () => void, Icon: typeof RotateCcwIcon, busyKey: string)}
+  <button
+    class="text-muted-foreground hover:text-foreground shrink-0 disabled:opacity-50"
+    {title}
+    aria-label={title}
+    disabled={!!acting}
+    onclick={(e) => {
+      e.stopPropagation();
+      onclick();
+    }}
+  >
+    <Icon class="size-3 {acting === busyKey ? 'animate-pulse' : ''}" />
+  </button>
 {/snippet}
 
 {#snippet browser(url: string)}
@@ -250,6 +286,16 @@
           </div>
           <span class="text-muted-foreground shrink-0 font-mono text-[10px] tabular-nums">{duration(r.duration_s)}</span>
           <span class="text-muted-foreground w-10 shrink-0 text-right font-mono text-[10px] tabular-nums">{age(r.created_at)}</span>
+          {#if pending(r.status)}
+            {@render action("Abbrechen", () => act(r.id, r.id, false, "cancel"), SquareIcon, `false:${r.id}`)}
+          {:else}
+            {#if kind === "github"}
+              {@render action("Alle Jobs neu starten", () => act(r.id, r.id, false, "rerun"), RotateCcwIcon, `false:${r.id}`)}
+            {/if}
+            {#if r.status === "failure" || r.status === "cancelled"}
+              {@render action("Fehlgeschlagene Jobs neu starten", () => act(r.id, r.id, false, "rerun_failed"), RefreshCwIcon, `false:${r.id}`)}
+            {/if}
+          {/if}
           {@render browser(r.web_url)}
         </div>
         {#if open[r.id]}
@@ -264,6 +310,13 @@
                   {#if j.stage}<span class="text-muted-foreground shrink-0 text-[10px]">{j.stage}</span>{/if}
                   <span class="min-w-0 flex-1 truncate text-[11px]">{j.name}</span>
                   <span class="text-muted-foreground shrink-0 font-mono text-[10px] tabular-nums">{duration(j.duration_s)}</span>
+                  {#if pending(j.status)}
+                    {#if kind === "gitlab"}
+                      {@render action("Job abbrechen", () => act(r.id, j.id, true, "cancel"), SquareIcon, `true:${j.id}`)}
+                    {/if}
+                  {:else if j.status !== "skipped"}
+                    {@render action("Job neu starten", () => act(r.id, j.id, true, "rerun"), RotateCcwIcon, `true:${j.id}`)}
+                  {/if}
                   {@render browser(j.web_url)}
                 </div>
               {:else}
