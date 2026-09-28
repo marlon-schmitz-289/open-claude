@@ -58,6 +58,7 @@ suchbar (`rust`).
 | `Strg` + `1`…`9` | Claude im Treffer starten |
 | `Strg` + `G` | Git-Ansicht öffnen |
 | `Strg` + `N` | Repo klonen |
+| `Strg` + `T` | Claude ohne Projekt starten (im Home-Ordner) |
 | `Strg` + `K` | Suche fokussieren |
 | `Strg` + `P` | Projekt anpinnen |
 | `Strg` + `E` | Ordner im Explorer öffnen |

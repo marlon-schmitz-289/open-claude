@@ -3,6 +3,7 @@
   import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { homeDir } from "@tauri-apps/api/path";
   import { open } from "@tauri-apps/plugin-dialog";
   import { load, type Store } from "@tauri-apps/plugin-store";
   import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
@@ -299,6 +300,13 @@
     await rescan();
   }
 
+  /** Claude ohne Projekt: laeuft im Home-Ordner, ohne Git. */
+  async function launchFree() {
+    const path = await homeDir();
+    launch({ path, rel: "~", branch: "", last_commit: "", langs: [] });
+  }
+  const isFree = (repo?: Repo) => repo?.rel === "~" && !repo.branch;
+
   /** Offene Session des Projekts zeigen, sonst eine neue starten. */
   function launch(repo?: Repo) {
     if (!repo) return;
@@ -515,7 +523,7 @@
       } else if (alt && e.key.toLowerCase() === "e") {
         e.preventDefault();
         reveal(viewRepo);
-      } else if (alt && e.key.toLowerCase() === "g" && view === "term") {
+      } else if (alt && e.key.toLowerCase() === "g" && view === "term" && !isFree(activeSession?.repo)) {
         e.preventDefault();
         openGit(activeSession?.repo);
       }
@@ -548,6 +556,8 @@
       openGit(current?.repo);
     } else if (ctrl && e.key.toLowerCase() === "n") {
       cloneOpen = true;
+    } else if (ctrl && e.key.toLowerCase() === "t") {
+      launchFree();
     } else if (e.key === "Escape") {
       if (query) query = "";
       else getCurrentWindow().close();
@@ -587,7 +597,7 @@
           {split(viewRepo.rel)[0]}
         </span>
       {/if}
-      {#if view === "term"}
+      {#if view === "term" && viewRepo.branch}
         <Badge variant="outline" class="text-muted-foreground shrink-0 gap-1 font-mono text-[11px]">
           <GitBranchIcon class="size-3" />
           {viewRepo.branch}
@@ -730,6 +740,16 @@
       <div class="text-muted-foreground flex items-center">
         <Button variant="ghost" size="icon" onclick={rescan} title="Neu einlesen (Strg+R)" aria-label="Neu einlesen">
           <RefreshIcon class="size-4 {scanning ? 'animate-spin' : ''}" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          class={sessions.some((s) => isFree(s.repo)) ? "text-primary" : ""}
+          onclick={launchFree}
+          title="Claude ohne Projekt starten (Strg+T)"
+          aria-label="Claude ohne Projekt starten"
+        >
+          <TerminalIcon class="size-4" />
         </Button>
         <Button variant="ghost" size="icon" onclick={() => (cloneOpen = true)} title="Repo klonen (Strg+N)" aria-label="Repo klonen">
           <DownloadIcon class="size-4" />
@@ -1077,6 +1097,7 @@
         ["Strg + E", "Ordner im Explorer öffnen"],
         ["Strg + R", "Neu einlesen"],
         ["Strg + O", "Dev-Ordner wechseln"],
+        ["Strg + T", "Claude ohne Projekt (im Home-Ordner)"],
         ["Rechtsklick", "Weitere Aktionen, z. B. vom Gerät löschen"],
         ["Esc", "Suche leeren, sonst schließen (bzw. ins Tray)"],
       ])}
