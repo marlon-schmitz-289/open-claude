@@ -35,6 +35,7 @@ const MARKERS: &[(&str, &str, bool)] = &[
     ("go.mod", "Go", false),
     ("csproj", "C#", true),
     ("sln", "C#", true),
+    ("slnx", "C#", true),
     ("fsproj", "F#", true),
     ("pyproject.toml", "Python", false),
     ("requirements.txt", "Python", false),
@@ -647,6 +648,8 @@ mod tests {
     fn erkennt_sprachen_an_projektdateien() {
         assert_eq!(langs_in(&names(&["Cargo.toml", "src"])), ["Rust"]);
         assert_eq!(langs_in(&names(&["adesk.csproj"])), ["C#"]);
+        // Neues Solution-Format, csproj nur in Unterordnern.
+        assert_eq!(langs_in(&names(&["MEFactory.slnx", "MEFactory"])), ["C#"]);
         // tsconfig.json schlaegt package.json, sonst stuende beides da.
         assert_eq!(langs_in(&names(&["package.json", "tsconfig.json"])), ["TypeScript"]);
         assert_eq!(langs_in(&names(&["package.json"])), ["JavaScript"]);
