@@ -51,6 +51,8 @@
     branch: string;
     last_commit: string;
     langs: string[];
+    /** Projekttyp (Unity, Tauri, ...); fehlt in alten Caches. */
+    kind?: string | null;
   };
 
   // Farben wie auf GitHub, damit die Sprache ohne Lesen erkennbar ist.
@@ -69,10 +71,21 @@
     TypeScript: "#3178c6",
     JavaScript: "#f1e05a",
     Unity: "#a4a4a4",
+    Tauri: "#24c8db",
+    Godot: "#478cbf",
+    Unreal: "#a4a4a4",
+    Flutter: "#02569b",
+    "Next.js": "#a4a4a4",
+    Nuxt: "#00dc82",
+    SvelteKit: "#ff3e00",
+    Angular: "#dd0031",
+    Django: "#44b78b",
   };
   type Cache = { root: string; repos: Repo[]; at: number };
 
-  const isUnity = (repo: Repo) => (repo.langs ?? []).includes("Unity");
+  const isUnity = (repo: Repo) => repo.kind === "Unity";
+  /** Badges: der Projekttyp sagt mehr als die Sprache (Unity statt C#). */
+  const tags = (repo: Repo) => (repo.kind ? [repo.kind] : (repo.langs ?? []));
 
   // raw: die Store-Instanz nicht proxien; null bis onMount geladen hat.
   let store = $state.raw<Store>(null!);
@@ -145,7 +158,7 @@
         const onName = fuzzy(name, q);
         const onPath = fuzzy(repo.rel, q);
         // "rust" oder "c#" tippen soll die passenden Projekte zeigen, aber nie vor Namenstreffern.
-        const onLang = q.length > 1 ? fuzzy((repo.langs ?? []).join(" "), q) : null;
+        const onLang = q.length > 1 ? fuzzy([repo.kind, ...(repo.langs ?? [])].filter(Boolean).join(" "), q) : null;
         if (!onName && !onPath && !onLang) return null;
         return {
           repo,
@@ -603,7 +616,7 @@
           {viewRepo.branch}
         </Badge>
       {/if}
-      {#each viewRepo.langs ?? [] as lang (lang)}
+      {#each tags(viewRepo) as lang (lang)}
         <Badge variant="outline" class="text-muted-foreground shrink-0 gap-1.5 text-[11px]">
           <span
             class="size-2 rounded-full"
@@ -909,7 +922,7 @@
                         </Badge>
                       {/if}
 
-                      {#each item.repo.langs ?? [] as lang (lang)}
+                      {#each tags(item.repo) as lang (lang)}
                         {#if lang === "Unity"}
                           {@const uinfo = unityInfo[item.repo.path]}
                           <span use:onVisible={() => loadUnityInfo(item.repo.path)}>
@@ -998,7 +1011,7 @@
         <GitView
           bind:this={gitView}
           repo={gitRepo.path}
-          langs={gitRepo.langs}
+          unity={isUnity(gitRepo)}
           {accounts}
           onaccounts={() => (accountsOpen = true)}
         />

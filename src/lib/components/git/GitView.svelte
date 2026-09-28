@@ -30,10 +30,10 @@
     repo,
     accounts,
     onaccounts,
-    langs = [],
-  }: { repo: string; accounts: Account[]; onaccounts: () => void; langs?: string[] } = $props();
+    unity = false,
+  }: { repo: string; accounts: Account[]; onaccounts: () => void; unity?: boolean } = $props();
 
-  const isUnity = $derived(langs.includes("Unity"));
+  const isUnity = $derived(unity);
 
   let status = $state<Status | null>(null);
   let refreshKey = $state(0);

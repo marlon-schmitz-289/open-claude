@@ -77,10 +77,11 @@ Im Terminal gehen alle Tasten an die Shell, außer:
 | `Strg` + `Shift` + `C` | Auswahl kopieren |
 | `Strg` + `V` | Einfügen |
 
-Angepinnte Projekte stehen immer oben. Die Sprache wird an den üblichen Projektdateien erkannt
-(`Cargo.toml`, `*.csproj`, `tsconfig.json`, …) und als Badge angezeigt, daneben Branch und Alter
-des letzten Commits. Unity-Projekte zeigen zusätzlich `Unity <Version>` mit einem Punkt für
-Editor offen/zu; per Rechtsklick lassen sich der Editor öffnen/schließen und Unity-Support
+Angepinnte Projekte stehen immer oben. Der Projekttyp (Unity, Tauri, Godot, Unreal, Flutter, Next.js,
+Nuxt, SvelteKit, Angular, Django) bzw. sonst die Sprache wird an den üblichen Projektdateien erkannt
+(`src-tauri/`, `project.godot`, `Cargo.toml`, `*.csproj`, …) und als Badge angezeigt, daneben Branch
+und Alter des letzten Commits. Die Suche findet beides, `rust` also auch Tauri-Projekte.
+Unity-Projekte zeigen `Unity <Version>` mit einem Punkt für Editor offen/zu; per Rechtsklick lassen sich der Editor öffnen/schließen und Unity-Support
 einrichten (siehe [Unity-Ansicht](#unity)).
 
 Beim ersten Start fragt die App nach dem Dev-Ordner, vorbelegt mit `%DEV%`, sonst `%USERPROFILE%\Dev`;

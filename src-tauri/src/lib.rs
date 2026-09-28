@@ -24,6 +24,8 @@ struct Repo {
     branch: String,
     last_commit: String,
     langs: Vec<String>,
+    /// Projekttyp (Unity, Tauri, ...); die Liste zeigt ihn statt der Sprachen.
+    kind: Option<String>,
 }
 
 /// Sprache an den ueblichen Projektdateien ablesen — ohne den Baum zu durchsuchen.
@@ -48,21 +50,45 @@ const MARKERS: &[(&str, &str, bool)] = &[
     ("package.json", "JavaScript", false),
 ];
 
-fn langs_in(names: &[String], unity: bool) -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
-    // Unity-Projekte haben auch .csproj/.sln; "Unity" sagt mehr, darum vor C#.
+/// Projekttyp an Dateien im Root; Reihenfolge = Prioritaet, `ext` wie bei MARKERS.
+/// Unity steht nicht hier: braucht Assets/ UND ProjectVersion.txt (unity::is_project).
+const KINDS: &[(&str, &str, bool)] = &[
+    ("src-tauri", "Tauri", false),
+    ("project.godot", "Godot", false),
+    ("uproject", "Unreal", true),
+    ("pubspec.yaml", "Flutter", false),
+    ("next.config.js", "Next.js", false),
+    ("next.config.mjs", "Next.js", false),
+    ("next.config.ts", "Next.js", false),
+    ("nuxt.config.ts", "Nuxt", false),
+    ("nuxt.config.js", "Nuxt", false),
+    ("svelte.config.js", "SvelteKit", false),
+    ("svelte.config.ts", "SvelteKit", false),
+    ("angular.json", "Angular", false),
+    ("manage.py", "Django", false),
+];
+
+fn has(names: &[String], marker: &str, by_ext: bool) -> bool {
+    names.iter().any(|n| {
+        if by_ext {
+            n.rsplit_once('.').is_some_and(|(_, ext)| ext.eq_ignore_ascii_case(marker))
+        } else {
+            n.eq_ignore_ascii_case(marker)
+        }
+    })
+}
+
+fn kind_in(names: &[String], unity: bool) -> Option<String> {
     if unity {
-        found.push("Unity".to_string());
+        return Some("Unity".into());
     }
+    KINDS.iter().find(|(m, _, e)| has(names, m, *e)).map(|(_, k, _)| (*k).to_string())
+}
+
+fn langs_in(names: &[String]) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
     for (marker, lang, by_ext) in MARKERS {
-        let hit = names.iter().any(|n| {
-            if *by_ext {
-                n.rsplit_once('.').is_some_and(|(_, ext)| ext.eq_ignore_ascii_case(marker))
-            } else {
-                n.eq_ignore_ascii_case(marker)
-            }
-        });
-        if hit && !found.iter().any(|f| f == lang) {
+        if has(names, marker, *by_ext) && !found.iter().any(|f| f == lang) {
             found.push((*lang).to_string());
         }
     }
@@ -74,15 +100,15 @@ fn langs_in(names: &[String], unity: bool) -> Vec<String> {
     found
 }
 
-fn read_langs(repo: &Path) -> Vec<String> {
+fn read_langs(repo: &Path) -> (Vec<String>, Option<String>) {
     let Ok(entries) = std::fs::read_dir(repo) else {
-        return Vec::new();
+        return (Vec::new(), None);
     };
     let names: Vec<String> = entries
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
-    langs_in(&names, unity::is_project(repo))
+    (langs_in(&names), kind_in(&names, unity::is_project(repo)))
 }
 
 /// Wie dev.bat: %DEV% wenn gesetzt, sonst %USERPROFILE%\Dev bzw. ~/Dev.
@@ -256,16 +282,20 @@ fn scan_blocking(root: String) -> Result<Vec<Repo>, String> {
                 s.spawn(move || {
                     chunk
                         .iter()
-                        .map(|proj| Repo {
-                            path: proj.to_string_lossy().into_owned(),
-                            rel: proj
-                                .strip_prefix(root)
-                                .unwrap_or(proj)
-                                .to_string_lossy()
-                                .into_owned(),
-                            branch: read_branch(proj),
-                            last_commit: read_last_commit(proj),
-                            langs: read_langs(proj),
+                        .map(|proj| {
+                            let (langs, kind) = read_langs(proj);
+                            Repo {
+                                path: proj.to_string_lossy().into_owned(),
+                                rel: proj
+                                    .strip_prefix(root)
+                                    .unwrap_or(proj)
+                                    .to_string_lossy()
+                                    .into_owned(),
+                                branch: read_branch(proj),
+                                last_commit: read_last_commit(proj),
+                                langs,
+                                kind,
+                            }
                         })
                         .collect::<Vec<_>>()
                 })
@@ -521,7 +551,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{branch_from_head, langs_in, scan_blocking, strip_appdir, trashable, HOOK_VARS};
+    use super::{branch_from_head, kind_in, langs_in, scan_blocking, strip_appdir, trashable, HOOK_VARS};
 
     const APPDIR: &str = "/tmp/.mount_OpenCl42";
 
@@ -615,14 +645,30 @@ mod tests {
 
     #[test]
     fn erkennt_sprachen_an_projektdateien() {
-        assert_eq!(langs_in(&names(&["Cargo.toml", "src"]), false), ["Rust"]);
-        assert_eq!(langs_in(&names(&["adesk.csproj"]), false), ["C#"]);
+        assert_eq!(langs_in(&names(&["Cargo.toml", "src"])), ["Rust"]);
+        assert_eq!(langs_in(&names(&["adesk.csproj"])), ["C#"]);
         // tsconfig.json schlaegt package.json, sonst stuende beides da.
-        assert_eq!(langs_in(&names(&["package.json", "tsconfig.json"]), false), ["TypeScript"]);
-        assert_eq!(langs_in(&names(&["package.json"]), false), ["JavaScript"]);
-        assert!(langs_in(&names(&["README.md"]), false).is_empty());
-        assert_eq!(langs_in(&names(&["Assets", "Game.sln", "Game.csproj"]), true), ["Unity", "C#"]);
-        assert_eq!(langs_in(&names(&["Assets"]), true), ["Unity"]);
+        assert_eq!(langs_in(&names(&["package.json", "tsconfig.json"])), ["TypeScript"]);
+        assert_eq!(langs_in(&names(&["package.json"])), ["JavaScript"]);
+        assert!(langs_in(&names(&["README.md"])).is_empty());
+    }
+
+    #[test]
+    fn erkennt_projekttyp() {
+        let k = |list: &[&str], unity| kind_in(&names(list), unity);
+        assert_eq!(k(&["Assets", "Game.sln", "Game.csproj"], true).as_deref(), Some("Unity"));
+        // Unity schlaegt alles andere, auch wenn zufaellig ein Marker daneben liegt.
+        assert_eq!(k(&["Assets", "package.json", "src-tauri"], true).as_deref(), Some("Unity"));
+        assert_eq!(k(&["src-tauri", "svelte.config.js", "package.json"], false).as_deref(), Some("Tauri"));
+        assert_eq!(k(&["project.godot", "Game.csproj"], false).as_deref(), Some("Godot"));
+        assert_eq!(k(&["Shooter.UPROJECT", "Source"], false).as_deref(), Some("Unreal"));
+        assert_eq!(k(&["pubspec.yaml"], false).as_deref(), Some("Flutter"));
+        assert_eq!(k(&["next.config.mjs", "package.json"], false).as_deref(), Some("Next.js"));
+        assert_eq!(k(&["svelte.config.js"], false).as_deref(), Some("SvelteKit"));
+        assert_eq!(k(&["manage.py", "requirements.txt"], false).as_deref(), Some("Django"));
+        // Nur Sprache, kein Typ; Ordner namens "Assets" allein ist kein Unity.
+        assert_eq!(k(&["Cargo.toml", "src"], false), None);
+        assert_eq!(k(&["Assets"], false), None);
     }
 
     #[test]
