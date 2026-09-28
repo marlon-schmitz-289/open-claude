@@ -39,6 +39,8 @@
   import CloneDialog from "$lib/components/git/CloneDialog.svelte";
   import AccountsDialog from "$lib/components/git/AccountsDialog.svelte";
   import { git, forge, type Account } from "$lib/git";
+  import { unity, unityBadgeText, type UnityInfo } from "$lib/unity";
+  import UnityCloseDialog from "$lib/components/unity/UnityCloseDialog.svelte";
   import DownloadIcon from "@lucide/svelte/icons/download";
   import UsersIcon from "@lucide/svelte/icons/users";
 
@@ -65,8 +67,11 @@
     "C++": "#f34b7d",
     TypeScript: "#3178c6",
     JavaScript: "#f1e05a",
+    Unity: "#a4a4a4",
   };
   type Cache = { root: string; repos: Repo[]; at: number };
+
+  const isUnity = (repo: Repo) => (repo.langs ?? []).includes("Unity");
 
   // raw: die Store-Instanz nicht proxien; null bis onMount geladen hat.
   let store = $state.raw<Store>(null!);
@@ -347,6 +352,57 @@
 
   // Fehler aus dem Kontextmenue als Leiste, error wuerde die ganze Liste ersetzen.
   let notice = $state("");
+
+  // ---------- Unity ----------
+
+  // unity_info je Repo nur bei Bedarf holen (nicht beim Scan fuer alle): lazy beim Sichtbarwerden in der Liste.
+  let unityInfo = $state<Record<string, UnityInfo>>({});
+  const unityInfoLoading = new Set<string>();
+
+  async function loadUnityInfo(path: string, force = false) {
+    if (!force && (unityInfo[path] || unityInfoLoading.has(path))) return;
+    unityInfoLoading.add(path);
+    try {
+      unityInfo[path] = await unity.info(path);
+    } catch {
+      // Badge zeigt dann einfach nur "Unity" ohne Status weiter an.
+    }
+    unityInfoLoading.delete(path);
+  }
+
+  /** Feuert `cb` einmalig, wenn das Element in den Sichtbereich der Liste scrollt. */
+  function onVisible(node: Element, cb: () => void) {
+    const io = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) {
+        cb();
+        io.disconnect();
+      }
+    });
+    io.observe(node);
+    return { destroy: () => io.disconnect() };
+  }
+
+  async function openUnityEditor(repo: Repo) {
+    try {
+      // Kehrt erst zurueck, wenn der Editor laeuft (bis 180 s).
+      await unity.open(repo.path);
+    } catch (e) {
+      notice = String(e);
+    }
+    await loadUnityInfo(repo.path, true);
+  }
+
+  let unityClosePath = $state<string | null>(null);
+
+  async function setupUnity(repo: Repo) {
+    try {
+      const log = await unity.setup(repo.path);
+      notice = log.trim().split("\n").slice(-2).join(" · ") || "Unity-Support eingerichtet.";
+    } catch (e) {
+      notice = String(e);
+    }
+    await loadUnityInfo(repo.path, true);
+  }
 
   async function browse(repo: Repo) {
     try {
@@ -834,13 +890,27 @@
                       {/if}
 
                       {#each item.repo.langs ?? [] as lang (lang)}
-                        <Badge variant="outline" class="text-muted-foreground gap-1.5 text-[11px]">
-                          <span
-                            class="size-2 rounded-full"
-                            style="background:{LANG_COLOR[lang] ?? 'var(--muted-foreground)'}"
-                          ></span>
-                          {lang}
-                        </Badge>
+                        {#if lang === "Unity"}
+                          {@const uinfo = unityInfo[item.repo.path]}
+                          <span use:onVisible={() => loadUnityInfo(item.repo.path)}>
+                            <Badge variant="outline" class="text-muted-foreground gap-1.5 text-[11px]">
+                              <span
+                                class="size-2 rounded-full {uinfo?.editorOpen ? 'bg-green-500' : ''}"
+                                style={uinfo?.editorOpen ? "" : `background:${LANG_COLOR.Unity}`}
+                                title={uinfo ? (uinfo.editorOpen ? "Editor offen" : "Editor zu") : ""}
+                              ></span>
+                              {unityBadgeText(uinfo)}
+                            </Badge>
+                          </span>
+                        {:else}
+                          <Badge variant="outline" class="text-muted-foreground gap-1.5 text-[11px]">
+                            <span
+                              class="size-2 rounded-full"
+                              style="background:{LANG_COLOR[lang] ?? 'var(--muted-foreground)'}"
+                            ></span>
+                            {lang}
+                          </Badge>
+                        {/if}
                       {/each}
 
                       <Badge variant="outline" class="text-muted-foreground gap-1 font-mono text-[11px]">
@@ -872,6 +942,12 @@
                     {@render repoItem("Im Browser öffnen", "", () => browse(item.repo))}
                     {@render repoItem("Pfad kopieren", "", () => navigator.clipboard.writeText(item.repo.path))}
                     {@render repoItem(pinned ? "Nicht mehr anpinnen" : "Anpinnen", "Strg+P", () => togglePin(item.repo.path))}
+                    {#if isUnity(item.repo)}
+                      <ContextMenu.Separator class="bg-border my-1 h-px" />
+                      {@render repoItem("Unity-Editor öffnen", "", () => openUnityEditor(item.repo))}
+                      {@render repoItem("Unity-Editor schließen …", "", () => (unityClosePath = item.repo.path))}
+                      {@render repoItem("Unity-Support einrichten", "", () => setupUnity(item.repo))}
+                    {/if}
                     <ContextMenu.Separator class="bg-border my-1 h-px" />
                     {@render repoItem("Vom Gerät löschen …", "", () => askTrash(item.repo), true)}
                   </ContextMenu.Content>
@@ -899,7 +975,13 @@
   {#if gitRepo}
     <div class="min-h-0 flex-1">
       {#key gitRepo.path}
-        <GitView bind:this={gitView} repo={gitRepo.path} {accounts} onaccounts={() => (accountsOpen = true)} />
+        <GitView
+          bind:this={gitView}
+          repo={gitRepo.path}
+          langs={gitRepo.langs}
+          {accounts}
+          onaccounts={() => (accountsOpen = true)}
+        />
       {/key}
     </div>
   {/if}
@@ -1074,6 +1156,8 @@
     </div>
   </Dialog.Content>
 </Dialog.Root>
+
+<UnityCloseDialog bind:path={unityClosePath} onclosed={(p) => loadUnityInfo(p, true)} />
 
 {#if store}
   <AccountsDialog bind:open={accountsOpen} {store} bind:accounts />

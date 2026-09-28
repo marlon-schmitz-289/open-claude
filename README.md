@@ -78,7 +78,9 @@ Im Terminal gehen alle Tasten an die Shell, außer:
 
 Angepinnte Projekte stehen immer oben. Die Sprache wird an den üblichen Projektdateien erkannt
 (`Cargo.toml`, `*.csproj`, `tsconfig.json`, …) und als Badge angezeigt, daneben Branch und Alter
-des letzten Commits.
+des letzten Commits. Unity-Projekte zeigen zusätzlich `Unity <Version>` mit einem Punkt für
+Editor offen/zu; per Rechtsklick lassen sich der Editor öffnen/schließen und Unity-Support
+einrichten (siehe [Unity-Ansicht](#unity)).
 
 Beim ersten Start fragt die App nach dem Dev-Ordner, vorbelegt mit `%DEV%`, sonst `%USERPROFILE%\Dev`;
 später wechselt `Strg` + `O` ihn. Einstellungen,
@@ -105,7 +107,8 @@ Daneben liegen *Neu einlesen*, *Klonen* und *Konten* als Icons.
 
 `Strg` + `G` in der Liste oder *Git* im Terminal-Kopf öffnet die Git-Ansicht des Projekts.
 Links stehen Branches (mit ↑↓ zum Upstream), Remotes, Tags, Stashes und offene Pull Requests,
-rechts die Tabs *Änderungen* und *Verlauf*. Aktionen gibt es per Rechtsklick, Löschen,
+rechts die Tabs *Änderungen*, *Verlauf*, *Releases*, *Pipelines*/*Actions* und bei Unity-Projekten
+zusätzlich *Unity*. Aktionen gibt es per Rechtsklick, Löschen,
 Reset, Verwerfen und Force-Push fragen vorher nach. Nicht gemergte Branches lassen sich nach
 einer zweiten Rückfrage trotzdem löschen.
 
@@ -124,11 +127,18 @@ einer zweiten Rückfrage trotzdem löschen.
   Konflikte mit *Fortsetzen* und *Abbrechen*. Klick auf eine Konfliktdatei öffnet den
   Merge-Editor: pro Block Ours, Theirs, beide oder Basis wählen, `F7` springt zum nächsten
   Konflikt, `Strg` + `S` speichert und markiert die Datei als gelöst.
+- **Unity** *(nur Unity-Projekte)*: Status von CLI, Editor (installiert/offen/verbunden), Pipeline-Paket
+  und Skill, dazu *Unity-Support einrichten* mit Log-Ausgabe. Editor öffnen/schließen (Schließen fragt
+  nach, *Erzwingen* beendet den Prozess hart). *EditMode*/*PlayMode* starten Tests: läuft der Editor
+  und ist per Pipeline erreichbar, laufen sie darüber, sonst im Batchmode; ist er offen, aber nicht
+  erreichbar, kommt ein Fehlertext statt eines Ergebnisses. Grün nur ohne fehlgeschlagene,
+  übersprungene oder unklare Tests, Fehler mit Meldung je Test.
 - *Claude*, *Explorer* und Aktualisieren stehen oben in der Titelleiste.
 
 | Taste | Aktion |
 | --- | --- |
-| `Strg` + `1` / `2` | Änderungen / Verlauf |
+| `Strg` + `1` … `4` | Änderungen / Verlauf / Releases / Pipelines |
+| `Strg` + `5` | Unity *(nur Unity-Projekte)* |
 | `Strg` + `Shift` + `F` | Fetch |
 | `Strg` + `Shift` + `L` | Pull (Merge; Rebase über das Menü daneben) |
 | `Strg` + `Shift` + `P` | Push, ohne Upstream mit `-u origin` |

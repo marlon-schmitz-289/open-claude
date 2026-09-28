@@ -14,6 +14,8 @@ mod pty;
 mod forge;
 // Git-Client ueber die git-CLI.
 mod git;
+// Unity-Projekte ueber die unity-CLI.
+mod unity;
 
 #[derive(Serialize)]
 struct Repo {
@@ -46,8 +48,12 @@ const MARKERS: &[(&str, &str, bool)] = &[
     ("package.json", "JavaScript", false),
 ];
 
-fn langs_in(names: &[String]) -> Vec<String> {
+fn langs_in(names: &[String], unity: bool) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
+    // Unity-Projekte haben auch .csproj/.sln; "Unity" sagt mehr, darum vor C#.
+    if unity {
+        found.push("Unity".to_string());
+    }
     for (marker, lang, by_ext) in MARKERS {
         let hit = names.iter().any(|n| {
             if *by_ext {
@@ -76,7 +82,7 @@ fn read_langs(repo: &Path) -> Vec<String> {
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
-    langs_in(&names)
+    langs_in(&names, unity::is_project(repo))
 }
 
 /// Wie dev.bat: %DEV% wenn gesetzt, sonst %USERPROFILE%\Dev bzw. ~/Dev.
@@ -482,7 +488,12 @@ pub fn run() {
             git::git_conflict,
             git::git_resolve,
             git::git_resolve_side,
-            git::git_conflict_sides
+            git::git_conflict_sides,
+            unity::unity_info,
+            unity::unity_setup,
+            unity::unity_open,
+            unity::unity_close,
+            unity::unity_test
         ])
         .setup(|app| tray(app.handle()).map_err(Into::into))
         // Mit Tray (macOS: immer) versteckt Schliessen nur — raus kommt man dann ueber das Tray-Menue.
@@ -498,7 +509,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| match event {
-            tauri::RunEvent::Exit => app.state::<pty::Ptys>().close_all(),
+            tauri::RunEvent::Exit => {
+                app.state::<pty::Ptys>().close_all();
+                unity::kill_all();
+            }
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => reopen(app),
             _ => {}
@@ -601,12 +615,14 @@ mod tests {
 
     #[test]
     fn erkennt_sprachen_an_projektdateien() {
-        assert_eq!(langs_in(&names(&["Cargo.toml", "src"])), ["Rust"]);
-        assert_eq!(langs_in(&names(&["adesk.csproj"])), ["C#"]);
+        assert_eq!(langs_in(&names(&["Cargo.toml", "src"]), false), ["Rust"]);
+        assert_eq!(langs_in(&names(&["adesk.csproj"]), false), ["C#"]);
         // tsconfig.json schlaegt package.json, sonst stuende beides da.
-        assert_eq!(langs_in(&names(&["package.json", "tsconfig.json"])), ["TypeScript"]);
-        assert_eq!(langs_in(&names(&["package.json"])), ["JavaScript"]);
-        assert!(langs_in(&names(&["README.md"])).is_empty());
+        assert_eq!(langs_in(&names(&["package.json", "tsconfig.json"]), false), ["TypeScript"]);
+        assert_eq!(langs_in(&names(&["package.json"]), false), ["JavaScript"]);
+        assert!(langs_in(&names(&["README.md"]), false).is_empty());
+        assert_eq!(langs_in(&names(&["Assets", "Game.sln", "Game.csproj"]), true), ["Unity", "C#"]);
+        assert_eq!(langs_in(&names(&["Assets"]), true), ["Unity"]);
     }
 
     #[test]

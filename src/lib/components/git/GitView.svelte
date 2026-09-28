@@ -11,6 +11,7 @@
   import HistoryPanel from "./HistoryPanel.svelte";
   import ReleasesPanel from "./ReleasesPanel.svelte";
   import PipelinesPanel from "./PipelinesPanel.svelte";
+  import UnityPanel from "$lib/components/unity/UnityPanel.svelte";
   import MergeEditor from "./MergeEditor.svelte";
   import DiffView from "./DiffView.svelte";
   import Splitter, { stored } from "$lib/components/Splitter.svelte";
@@ -25,19 +26,26 @@
   import UserIcon from "@lucide/svelte/icons/user";
   import CheckIcon from "@lucide/svelte/icons/check";
 
-  let { repo, accounts, onaccounts }: { repo: string; accounts: Account[]; onaccounts: () => void } = $props();
+  let {
+    repo,
+    accounts,
+    onaccounts,
+    langs = [],
+  }: { repo: string; accounts: Account[]; onaccounts: () => void; langs?: string[] } = $props();
+
+  const isUnity = $derived(langs.includes("Unity"));
 
   let status = $state<Status | null>(null);
   let refreshKey = $state(0);
   // Forge-Panels kosten API-Calls: nur nachziehen, wenn sich HEAD/Branch bewegt oder das Remote angefasst wurde.
   let forgeKey = $state(0);
   let side = $state(stored("git.side", 240));
-  let tab = $state<"changes" | "history" | "releases" | "ci">("changes");
+  let tab = $state<"changes" | "history" | "releases" | "ci" | "unity">("changes");
   // Forge-Tabs erst beim ersten Oeffnen mounten: sonst API-Calls, obwohl nie hingeschaut wird.
-  let seen = $state({ releases: false, ci: false });
+  let seen = $state({ releases: false, ci: false, unity: false });
   let ciKind = $state<ForgeKind | null>(null);
   $effect(() => {
-    if (tab === "releases" || tab === "ci") seen[tab] = true;
+    if (tab === "releases" || tab === "ci" || tab === "unity") seen[tab] = true;
   });
   let conflictPath = $state<string | null>(null);
   let jumpTo = $state<string | null>(null);
@@ -178,6 +186,7 @@
     else if (ctrl && !e.shiftKey && e.key === "2") tab = "history";
     else if (ctrl && !e.shiftKey && e.key === "3") tab = "releases";
     else if (ctrl && !e.shiftKey && e.key === "4") tab = "ci";
+    else if (ctrl && !e.shiftKey && e.key === "5" && isUnity) tab = "unity";
     else if (ctrl && e.shiftKey && k === "f") doFetch();
     else if (ctrl && e.shiftKey && k === "p") push();
     else if (ctrl && e.shiftKey && k === "l") pull();
@@ -346,7 +355,7 @@
           />
         {:else}
           <div class="border-border flex gap-1 border-b px-2">
-            {#each [["changes", "Änderungen", "Strg+1"], ["history", "Verlauf", "Strg+2"], ["releases", "Releases", "Strg+3"], ["ci", ciKind === "gitlab" ? "Pipelines" : ciKind === "github" ? "Actions" : "CI", "Strg+4"]] as [id, label, key] (id)}
+            {#each [["changes", "Änderungen", "Strg+1"], ["history", "Verlauf", "Strg+2"], ["releases", "Releases", "Strg+3"], ["ci", ciKind === "gitlab" ? "Pipelines" : ciKind === "github" ? "Actions" : "CI", "Strg+4"], ...(isUnity ? [["unity", "Unity", "Strg+5"]] : [])] as [id, label, key] (id)}
               <button
                 class="-mb-px border-b-2 px-2 py-1.5 {tab === id
                   ? 'border-primary text-foreground'
@@ -376,6 +385,11 @@
             {#if seen.ci}
               <div class="h-full {tab === 'ci' ? '' : 'hidden'}">
                 <PipelinesPanel {repo} refreshKey={forgeKey} visible={tab === "ci"} bind:kind={ciKind} />
+              </div>
+            {/if}
+            {#if seen.unity}
+              <div class="h-full {tab === 'unity' ? '' : 'hidden'}">
+                <UnityPanel {repo} />
               </div>
             {/if}
           </div>
