@@ -67,7 +67,7 @@ jobs:
           {
             echo 'body<<NOTES_EOF'
             git log ${prev:+$prev..}"$GITHUB_REF_NAME" --no-merges -E --grep='^(feat|fix)' --format=%b \
-              | grep -E '^(- |  )' | grep -vE '^- Version [0-9]'
+              | grep -E '^(- |  )' | grep -vE '^- Version [0-9]' || true
             echo NOTES_EOF
           } >> "$GITHUB_OUTPUT"
 
