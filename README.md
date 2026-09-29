@@ -110,7 +110,7 @@ Daneben liegen *Neu einlesen*, *Klonen* und *Konten* als Icons.
 `Strg` + `G` in der Liste oder *Git* im Terminal-Kopf öffnet die Git-Ansicht des Projekts.
 Links stehen Branches (mit ↑↓ zum Upstream), Remotes, Tags, Stashes und offene Pull Requests,
 rechts die Tabs *Änderungen*, *Verlauf*, *Releases*, *Pipelines*/*Actions* und bei Unity-Projekten
-zusätzlich *Unity*. Aktionen gibt es per Rechtsklick, Löschen,
+zusätzlich *Unity*, dazu *Skills*. Aktionen gibt es per Rechtsklick, Löschen,
 Reset, Verwerfen und Force-Push fragen vorher nach. Nicht gemergte Branches lassen sich nach
 einer zweiten Rückfrage trotzdem löschen.
 
@@ -135,12 +135,24 @@ einer zweiten Rückfrage trotzdem löschen.
   und ist per Pipeline erreichbar, laufen sie darüber, sonst im Batchmode; ist er offen, aber nicht
   erreichbar, kommt ein Fehlertext statt eines Ergebnisses. Grün nur ohne fehlgeschlagene,
   übersprungene oder unklare Tests, Fehler mit Meldung je Test.
+- **Skills:** Alle Skills aus `~/.claude/skills`, `.claude/skills` des Projekts und installierten
+  Plugins, mit Suche, Quelle und Beschreibung. Plugins lassen sich als Gruppe an- und ausschalten.
+  Neben jedem Schalter steht, woher der Wert kommt (User, Team, Profil, angepasst); Anpassungen
+  lassen sich einzeln zurücksetzen. Oben wählt man das Profil: nach Projekttyp, fest oder keins.
+  *Skill-Profile* im Einstellungsmenü legt Profile als Vorlagen an (leer oder aus einem Projekt)
+  und ordnet sie Projekttypen zu. Anpassungen im Projekt ändern das Profil nie. Das Ergebnis landet
+  vor jedem Start und bei jeder Änderung als `skillOverrides`/`enabledPlugins` in
+  `.claude/settings.local.json`; andere Keys bleiben erhalten, die Datei kommt in
+  `.git/info/exclude`. Ist sie eingecheckt, schreibt die App nichts. Projekte ohne Profil und
+  Anpassung bleiben unberührt. Änderungen an `~/.claude/settings.json` greifen erst beim nächsten
+  Start über die App.
 - *Claude*, *Explorer* und Aktualisieren stehen oben in der Titelleiste.
 
 | Taste | Aktion |
 | --- | --- |
 | `Strg` + `1` … `4` | Änderungen / Verlauf / Releases / Pipelines |
 | `Strg` + `5` | Unity *(nur Unity-Projekte)* |
+| `Strg` + `6` | Skills |
 | `Strg` + `Shift` + `F` | Fetch |
 | `Strg` + `Shift` + `L` | Pull (Merge; Rebase über das Menü daneben) |
 | `Strg` + `Shift` + `P` | Push, ohne Upstream mit `-u origin` |

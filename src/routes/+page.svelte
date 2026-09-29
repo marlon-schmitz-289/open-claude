@@ -42,6 +42,9 @@
   import { git, forge, type Account } from "$lib/git";
   import { unity, unityBadgeText, type UnityInfo } from "$lib/unity";
   import UnityCloseDialog from "$lib/components/unity/UnityCloseDialog.svelte";
+  import ProfilesDialog from "$lib/components/skills/ProfilesDialog.svelte";
+  import { sync, touched, profileFor, managed, pkey, emptyProject, type SkillStore, type ProjectSkills } from "$lib/skills";
+  import SparklesIcon from "@lucide/svelte/icons/sparkles";
   import DownloadIcon from "@lucide/svelte/icons/download";
   import UsersIcon from "@lucide/svelte/icons/users";
 
@@ -118,6 +121,10 @@
   let cloneOpen = $state(false);
   let accountsOpen = $state(false);
   let accounts = $state<Account[]>([]);
+  let skillStore = $state<SkillStore>({ profiles: {}, kindProfiles: {}, projects: {} });
+  let profilesOpen = $state(false);
+  // Sync-Fehler sichtbar in jeder Ansicht (Liste, Terminal, Git), notice gehoert nur zur Liste.
+  let skillNotice = $state("");
 
   async function toggleAutostart() {
     try {
@@ -249,6 +256,11 @@
     autostart = await isEnabled().catch(() => false);
     tray = (await store.get<boolean>("tray")) ?? true;
     amongUs = { ...amongUs, ...(await store.get<typeof amongUs>("amongUs")) };
+    skillStore = {
+      profiles: (await store.get<SkillStore["profiles"]>("skillProfiles")) ?? {},
+      kindProfiles: (await store.get<SkillStore["kindProfiles"]>("kindProfiles")) ?? {},
+      projects: (await store.get<SkillStore["projects"]>("projectSkills")) ?? {},
+    };
     if (!mac) await invoke("set_tray", { on: tray });
 
     // Erster Start: Dev-Ordner erst bestaetigen lassen, dann einlesen.
@@ -320,10 +332,58 @@
   }
   const isFree = (repo?: Repo) => repo?.rel === "~" && !repo.branch;
 
+  // ---------- Skills ----------
+
+  async function saveSkills() {
+    const s = $state.snapshot(skillStore);
+    await Promise.all([
+      store.set("skillProfiles", s.profiles),
+      store.set("kindProfiles", s.kindProfiles),
+      store.set("projectSkills", s.projects),
+    ]);
+  }
+
+  // Pro Projekt nacheinander, jeweils mit dem Stand beim Start: sonst ueberholt ein alter Sync einen neuen.
+  const syncQueue = new Map<string, Promise<unknown>>();
+
+  /** Ergebnis in settings.local.json der Projekte schreiben; Fehler nur melden. */
+  async function syncSkills(paths: string[]) {
+    const run = (p: string) => {
+      const next = (syncQueue.get(pkey(p)) ?? Promise.resolve())
+        .then(() => sync($state.snapshot(skillStore), p, repos.find((r) => r.path === p)?.kind))
+        .then(() => "", (e) => `${p}: ${e}`);
+      syncQueue.set(pkey(p), next);
+      return next;
+    };
+    const errs = await Promise.all(paths.map(run));
+    const msg = errs.filter(Boolean).join("\n");
+    if (msg) skillNotice = `Skills nicht geschrieben: ${msg}`;
+  }
+
+  async function setProjectSkills(path: string, ps: ProjectSkills) {
+    skillStore.projects[pkey(path)] = ps;
+    await saveSkills();
+    await syncSkills([path]);
+  }
+
+  async function saveProfiles(next: SkillStore) {
+    const paths = touched($state.snapshot(skillStore), next, repos);
+    // Betroffene gelten ab jetzt als verwaltet, sonst bleibt nach Entfernen des Profils der alte Stand liegen.
+    for (const p of paths) next.projects[pkey(p)] ??= emptyProject();
+    skillStore = next;
+    await saveSkills();
+    await syncSkills(paths);
+  }
+
+  const profileName = (repo: Repo) => profileFor(skillStore.projects[pkey(repo.path)], repo.kind, skillStore.kindProfiles);
+
   /** Offene Session des Projekts zeigen, sonst eine neue starten. */
-  function launch(repo?: Repo) {
+  async function launch(repo?: Repo) {
     if (!repo) return;
     if (gitRepo && gitView && !gitView.canLeave()) return;
+    // Vor dem Start schreiben, damit claude die Skills schon sieht; ein Fehler haelt den Start nicht auf.
+    // Nie konfigurierte Projekte bleiben unberuehrt.
+    if (!isFree(repo) && !running.has(repo.path) && managed(skillStore, repo.path, repo.kind)) await syncSkills([repo.path]);
     leaveGit();
     let s = sessions.find((s) => s.repo.path === repo.path);
     // Eindeutig pro Seitenladung: nach einem Neuladen laufen alte PTYs evtl. noch unter "t1"
@@ -546,12 +606,12 @@
     if (e.key === "Escape" && (overlayOnEsc || e.defaultPrevented)) return;
     const ctrl = e.ctrlKey || e.metaKey;
     if (e.key === "F1" || (ctrl && e.key === "/")) {
-      if (!cloneOpen && !accountsOpen && !setup) help = !help;
+      if (!cloneOpen && !accountsOpen && !setup && !profilesOpen) help = !help;
       e.preventDefault();
       return;
     }
     // Offene Dialoge (Hilfe, Klonen, Konten) bekommen ihre Tasten selbst.
-    if (help || cloneOpen || accountsOpen || setup || doomed) return;
+    if (help || cloneOpen || accountsOpen || setup || doomed || profilesOpen) return;
 
     if (ctrl && e.key >= "1" && e.key <= "9") {
       launch(flat[Number(e.key) - 1]?.repo);
@@ -723,6 +783,7 @@
 </div>
 
 <div class="flex h-[calc(100vh-2.25rem)] flex-col">
+  <Notice bind:text={skillNotice} />
   <Command.Root
     shouldFilter={false}
     bind:value={selected}
@@ -832,6 +893,13 @@
               <DropdownMenu.Separator class="bg-border my-1 h-px" />
               <DropdownMenu.Item
                 class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5"
+                onSelect={() => (profilesOpen = true)}
+              >
+                <SparklesIcon class="text-muted-foreground size-3.5" />
+                <span class="flex-1">Skill-Profile</span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5"
                 onSelect={() => checkUpdate(true)}
               >
                 <RefreshIcon class="text-muted-foreground size-3.5 {checking ? 'animate-spin' : ''}" />
@@ -919,6 +987,14 @@
                             aria-label="Sitzung beenden"
                             title="Sitzung beenden"><XIcon class="size-3" /></button
                           >
+                        </Badge>
+                      {/if}
+
+                      {@const prof = profileName(item.repo)}
+                      {#if prof}
+                        <Badge variant="outline" class="text-muted-foreground gap-1 text-[11px]" title="Skill-Profil">
+                          <SparklesIcon class="size-3" />
+                          {prof}
                         </Badge>
                       {/if}
 
@@ -1012,6 +1088,9 @@
           bind:this={gitView}
           repo={gitRepo.path}
           unity={isUnity(gitRepo)}
+          kind={gitRepo.kind}
+          {skillStore}
+          onskills={(ps) => setProjectSkills(gitRepo!.path, ps)}
           {accounts}
           onaccounts={() => (accountsOpen = true)}
         />
@@ -1123,7 +1202,7 @@
         ])}
         {@render keys("Git-Ansicht", [
           ["Esc", "Zurück zur Liste"],
-          ["Strg + 1 … 4", "Änderungen / Verlauf / Releases / Actions"],
+          ["Strg + 1 … 6", "Änderungen / Verlauf / Releases / Actions / Unity / Skills"],
           ["Strg + ⇧ + F", "Fetch"],
           ["Strg + ⇧ + L", "Pull"],
           ["Strg + ⇧ + P", "Push"],
@@ -1190,6 +1269,8 @@
     </div>
   </Dialog.Content>
 </Dialog.Root>
+
+<ProfilesDialog bind:open={profilesOpen} store={skillStore} {repos} repo={current?.repo.path} onsave={saveProfiles} />
 
 <UnityCloseDialog bind:path={unityClosePath} onclosed={(p) => loadUnityInfo(p, true)} />
 

@@ -199,12 +199,12 @@ fn ok(cmd: &mut Command) -> bool {
     exec(cmd, None).is_ok_and(|o| o.status.success())
 }
 
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(f)
         .await
-        .map_err(|e| format!("Git abgebrochen: {e}"))?
+        .map_err(|e| format!("abgebrochen: {e}"))?
 }
 
 // ---------- Eingaben pruefen ----------

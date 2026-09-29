@@ -16,6 +16,8 @@ mod forge;
 mod git;
 // Unity-Projekte ueber die unity-CLI.
 mod unity;
+// Skill-Manager: SKILL.md lesen, settings.local.json schreiben.
+mod skills;
 
 #[derive(Serialize)]
 struct Repo {
@@ -524,7 +526,9 @@ pub fn run() {
             unity::unity_setup,
             unity::unity_open,
             unity::unity_close,
-            unity::unity_test
+            unity::unity_test,
+            skills::skills_list,
+            skills::skills_write_local
         ])
         .setup(|app| tray(app.handle()).map_err(Into::into))
         // Mit Tray (macOS: immer) versteckt Schliessen nur — raus kommt man dann ueber das Tray-Menue.
