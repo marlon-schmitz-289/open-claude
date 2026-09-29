@@ -1,5 +1,6 @@
 <script lang="ts">
   import Notice from "$lib/components/Notice.svelte";
+  import Markdown from "$lib/components/Markdown.svelte";
   import { untrack } from "svelte";
   import { age } from "$lib/utils";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
@@ -230,9 +231,8 @@
             <p class="text-muted-foreground text-[10px]">
               <span class="font-mono">{r.tag}</span> · {r.author} · {new Date(r.published_at ?? r.created_at).toLocaleString("de-DE")}
             </p>
-            <!-- Body ist fremdes Markdown: nur als Text, nie {@html} -->
             {#if r.body}
-              <p class="whitespace-pre-wrap break-words text-[11px] select-text">{r.body}</p>
+              <Markdown text={r.body} base={r.web_url} onerror={(e) => (error = e)} />
             {:else}
               <p class="text-muted-foreground text-[11px] italic">Keine Beschreibung.</p>
             {/if}
