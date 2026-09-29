@@ -105,8 +105,10 @@
 
   let form = $state<(ReleaseInput & { id: string | null }) | null>(null);
   let branch = $state("");
+  let preview = $state(false);
 
   function openForm(r: Release | null) {
+    preview = false;
     form = r
       ? { id: r.id, tag: r.tag, name: r.name, body: r.body, draft: r.draft, prerelease: r.prerelease, target: null }
       : { id: null, tag: "", name: "", body: "", draft: false, prerelease: false, target: null };
@@ -286,10 +288,25 @@
           <span class="text-muted-foreground">Name</span>
           <Input bind:value={form.name} placeholder={form.tag || "Name"} />
         </label>
-        <label class="block space-y-1">
-          <span class="text-muted-foreground">Beschreibung (Markdown)</span>
-          <Textarea bind:value={form.body} rows={10} class="font-mono text-[11px]" />
-        </label>
+        <div class="space-y-1">
+          <div class="flex items-center">
+            <label for="release-body" class="text-muted-foreground flex-1">Beschreibung (Markdown)</label>
+            <button class="text-muted-foreground hover:text-foreground text-[11px]" onclick={() => (preview = !preview)}>
+              {preview ? "Bearbeiten" : "Vorschau"}
+            </button>
+          </div>
+          {#if preview}
+            <div class="border-input h-[212px] overflow-y-auto rounded-md border px-3 py-2">
+              {#if form.body.trim()}
+                <Markdown text={form.body} onerror={(e) => (error = e)} />
+              {:else}
+                <p class="text-muted-foreground text-[11px] italic">Keine Beschreibung.</p>
+              {/if}
+            </div>
+          {:else}
+            <Textarea id="release-body" bind:value={form.body} rows={10} class="font-mono text-[11px]" />
+          {/if}
+        </div>
         {#if kind === "github"}
           <div class="flex gap-4">
             <label class="flex items-center gap-1.5">
