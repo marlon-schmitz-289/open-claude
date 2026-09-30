@@ -169,12 +169,18 @@
     }
   }
 
-  function commit() {
+  function commit(push = false) {
     if (!canCommit) return;
     run(async () => {
       await git.commit(repo, message, amend);
       message = amendMsg = "";
       amend = false;
+      if (!push) return;
+      // Der Commit steht schon: Liste sofort aktualisieren, ein Push-Fehler darf ihn nicht verstecken.
+      onchange();
+      await git.push(repo, false).catch((e) => {
+        throw `Commit erstellt, Push fehlgeschlagen: ${e}`;
+      });
     });
   }
 
@@ -294,12 +300,13 @@
       <div class="border-border flex flex-col gap-1.5 border-t p-2">
         <textarea
           class="border-input bg-background focus-visible:ring-ring/50 h-24 resize-none rounded-md border px-2 py-1 font-mono text-[11px] outline-none focus-visible:ring-2"
-          placeholder="Commit-Nachricht (Strg+Enter)"
+          placeholder="Commit-Nachricht (Strg+Enter, mit Umschalt: + Push)"
           bind:value={message}
           onkeydown={(e) => {
             if (e.key === "Enter" && e.ctrlKey) {
               e.preventDefault();
-              commit();
+              // Amend braeuchte nach einem Push Force: das bleibt dem Force-Push in der Toolbar.
+              commit(e.shiftKey && !amend);
             }
           }}
         ></textarea>
@@ -314,9 +321,14 @@
           >
             {subjectLen}/72
           </span>
-          <Button size="xs" disabled={!canCommit} onclick={commit}>
+          <Button size="xs" disabled={!canCommit} onclick={() => commit()}>
             {amend ? "Amend" : "Commit"}{staged.length ? ` (${staged.length})` : ""}
           </Button>
+          {#if !amend}
+            <Button size="xs" variant="outline" disabled={!canCommit} onclick={() => commit(true)} title="Strg+Umschalt+Enter">
+              Commit + Push
+            </Button>
+          {/if}
         </div>
       </div>
     </div>
