@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseConflicts, render, type Choice } from "./conflict.ts";
+import { diffLines, parseConflicts, render, type Choice } from "./conflict.ts";
 
 let seed = 1;
 const ri = (n: number) => Math.floor(((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x80000000) * n);
@@ -128,5 +128,30 @@ test("gegen echtes git merge-file (merge, diff3, zdiff3; LF und CRLF)", () => {
     assert.ok(total > 10, `nur ${total} Konflikte`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("diffLines: null genau fuer die LCS-Zeilen, Bereiche innerhalb der Zeile", () => {
+  const lcs = (a: string[], b: string[]): number =>
+    !a.length || !b.length ? 0
+      : a[0] === b[0] ? 1 + lcs(a.slice(1), b.slice(1))
+        : Math.max(lcs(a.slice(1), b), lcs(a, b.slice(1)));
+  for (let s = 1; s <= 4000; s++) {
+    seed = s;
+    const gen = () => Array.from({ length: ri(7) }, () => pick(TEXT));
+    const [a, b] = [gen(), gen()];
+    const marks = diffLines(a, b);
+    const msg = `Seed ${s}: ${JSON.stringify([a, b, marks])}`;
+    assert.equal(marks.length, a.length, msg);
+    // unveraenderte Zeilen bilden eine gemeinsame Teilfolge von b, und zwar eine laengste
+    let j = 0;
+    marks.forEach((m, i) => {
+      if (m === null) {
+        j = b.indexOf(a[i], j) + 1;
+        assert.ok(j > 0, msg);
+      } else assert.ok(0 <= m[0] && m[0] <= m[1] && m[1] <= a[i].length, msg);
+    });
+    assert.equal(marks.filter((m) => m === null).length, lcs(a, b), msg);
+    assert.ok(diffLines(a, a).every((m) => m === null), msg);
   }
 });

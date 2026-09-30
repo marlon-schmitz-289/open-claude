@@ -3,11 +3,13 @@
   import { tick } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { git, type Conflict } from "$lib/git";
-  import { parseConflicts, render, type Choice, type Segment } from "$lib/conflict";
+  import { diffLines, parseConflicts, render, type Choice, type Mark, type Segment } from "$lib/conflict";
   import { Button } from "$lib/components/ui/button/index.js";
   import { DropdownMenu } from "bits-ui";
   import ChevronUpIcon from "@lucide/svelte/icons/chevron-up";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+  import ChevronsLeftIcon from "@lucide/svelte/icons/chevrons-left";
+  import ChevronsRightIcon from "@lucide/svelte/icons/chevrons-right";
   import UndoIcon from "@lucide/svelte/icons/undo-2";
   import PencilIcon from "@lucide/svelte/icons/pencil";
 
@@ -43,6 +45,26 @@
   });
   const total = $derived(nums.filter((n) => n >= 0).length);
   const open = $derived(Array.from({ length: total }, (_, i) => i).filter((i) => !choices[i]));
+
+  const lines = (t: string) => (t ? t.replace(/\n$/, "").split("\n") : []);
+  // Je Segment einmal zerlegen (unabhaengig von choices): Kontextzeilen ...
+  const plains = $derived(segments.map((s) => (s.kind === "plain" ? lines(s.text) : [])));
+  // ... bzw. je Konflikt beide Seiten samt Marken gegen die Basis (ohne Basis gegen die jeweils andere Seite).
+  const parts = $derived(
+    segments.map((s) => {
+      if (s.kind === "plain") return null;
+      const [ours, theirs] = [lines(s.ours), lines(s.theirs)];
+      const base = s.base === null ? null : lines(s.base);
+      return { ours, theirs, base, oursMarks: diffLines(ours, base ?? theirs), theirsMarks: diffLines(theirs, base ?? ours) };
+    }),
+  );
+  // Zeilen jedes Segments im gerenderten Ergebnis (offene Konflikte samt Markern) ...
+  const results = $derived(segments.map((s, i) => (s.kind === "plain" ? plains[i] : lines(render([s], [choices[nums[i]]])))));
+  // ... und daraus die erste Zeilennummer jedes Segments.
+  const starts = $derived.by(() => {
+    let at = 1;
+    return results.map((r) => (at += r.length) - r.length);
+  });
 
   function load(text: string) {
     segments = parseConflicts(text);
@@ -150,7 +172,6 @@
     }
   }
 
-  const lines = (t: string) => t.replace(/\n$/, "").split("\n");
   const label = (c: Choice) =>
     ({
       ours: sides.ours,
@@ -162,6 +183,28 @@
 </script>
 
 <svelte:window {onkeydown} />
+
+<!-- Zeilen mit Nummern im Ergebnis; zwei <pre> statt ein Element pro Zeile (grosse Dateien) -->
+{#snippet code(ls: string[], from: number)}
+  <div class="flex overflow-x-auto">
+    <pre class="text-muted-foreground/60 bg-background sticky left-0 w-10 shrink-0 pr-1 text-right select-none">{ls.map((_, k) => from + k).join("\n")}</pre>
+    <pre class="pr-3">{ls.join("\n")}</pre>
+  </div>
+{/snippet}
+
+<!-- Eine Seite: unveraenderte Zeilen gedimmt, geaenderte in Seitenfarbe, abweichender Teil kraeftiger -->
+{#snippet column(ls: string[], marks: Mark[], dim: boolean, tint: string, strong: string)}
+  <div class="overflow-x-auto {dim ? 'opacity-50' : ''}">
+    <div class="w-max min-w-full">
+      {#each ls as l, k (k)}
+        {@const m = marks[k]}
+        <div class="min-h-5 px-3 whitespace-pre {m ? tint : 'text-muted-foreground'}">{#if m}{l.slice(0, m[0])}<span class={strong}>{l.slice(m[0], m[1])}</span>{l.slice(m[1])}{:else}{l}{/if}</div>
+      {:else}
+        <div class="text-muted-foreground px-3">(leer)</div>
+      {/each}
+    </div>
+  </div>
+{/snippet}
 
 <div class="@container flex h-full min-h-0 flex-col text-xs">
   <!-- Immer einzeilig: Pfad kuerzt sich, bei wenig Platz (Containerbreite, nicht Fenster) nur Icons -->
@@ -231,66 +274,93 @@
       bind:value={draft}
     ></textarea>
   {:else}
-    <div class="min-h-0 flex-1 overflow-auto font-mono leading-5" bind:this={scroller}>
+    <div class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto font-mono leading-5" bind:this={scroller}>
       {#each segments as seg, i (i)}
         {#if seg.kind === "plain"}
-          {@const ls = lines(seg.text)}
+          {@const ls = plains[i]}
           {@const head = i === 0 ? 0 : CONTEXT}
           {@const tail = i === segments.length - 1 ? 0 : CONTEXT}
           {#if ls.length > head + tail + CONTEXT && !expanded.has(i)}
-            {#if head}<pre class="px-3">{ls.slice(0, head).join("\n")}</pre>{/if}
+            {#if head}{@render code(ls.slice(0, head), starts[i])}{/if}
             <button
               class="text-muted-foreground hover:text-foreground bg-secondary/40 w-full px-3 py-0.5 text-left text-[11px]"
               onclick={() => expanded.add(i)}>… {ls.length - head - tail} unveränderte Zeilen einblenden</button
             >
-            {#if tail}<pre class="px-3">{ls.slice(-tail).join("\n")}</pre>{/if}
+            {#if tail}{@render code(ls.slice(-tail), starts[i] + ls.length - tail)}{/if}
           {:else}
-            <pre class="px-3">{seg.text.replace(/\n$/, "")}</pre>
+            {@render code(ls, starts[i])}
           {/if}
         {:else}
           {@const n = nums[i]}
           {@const c = choices[n]}
+          {@const p = parts[i]!}
+          {@const hasOurs = !!c?.includes("ours")}
+          {@const hasTheirs = !!c?.includes("theirs")}
+          {@const result = c ? results[i] : []}
           <div
             data-conflict={n}
-            class="my-1 border-l-4 {c ? 'border-primary/60' : 'border-destructive'} {n === current ? 'ring-primary/50 ring-1' : ''}"
+            class="my-1 grid grid-cols-1 border-l-4 @3xl:grid-cols-3 {c ? 'border-primary/60' : 'border-destructive'} {n === current ? 'ring-primary/50 ring-1' : ''}"
           >
-            <div class="bg-secondary/60 flex flex-wrap items-center gap-1 px-2 py-1 font-sans">
-              <span class="mr-1 text-[11px] font-semibold {c ? 'text-primary' : 'text-destructive'}">
-                Konflikt {n + 1}{c ? ` · ${label(c)}` : ""}
-              </span>
-              {#if c}
-                <Button variant="ghost" size="sm" class="h-5 px-1.5 text-[11px]" onclick={() => choose(n, null)}>
-                  <UndoIcon class="size-3" /> Rückgängig
+            <div class="min-w-0">
+              <div class="text-muted-foreground flex h-6 items-center gap-1 bg-emerald-500/10 pr-1 pl-3 font-sans text-[11px]">
+                <span class="min-w-0 flex-1 truncate" title={sides.ours}>{sides.ours}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="h-5 px-1"
+                  disabled={hasOurs}
+                  onclick={() => choose(n, c === "theirs" ? "theirs-ours" : "ours")}
+                  title={c === "theirs" ? `${sides.ours} zusätzlich anhängen` : `${sides.ours} übernehmen`}
+                >
+                  <ChevronsRightIcon class="size-3.5" />
                 </Button>
-              {:else}
-                {#each ["ours", "theirs", "ours-theirs", "theirs-ours"] as const as ch (ch)}
-                  <Button variant="outline" size="sm" class="h-5 px-1.5 text-[11px]" onclick={() => choose(n, ch)}>{label(ch)}</Button>
-                {/each}
-                {#if seg.base !== null}
-                  <Button variant="outline" size="sm" class="h-5 px-1.5 text-[11px]" onclick={() => choose(n, "base")}>Basis</Button>
+              </div>
+              {@render column(p.ours, p.oursMarks, !!c && !hasOurs, "bg-emerald-500/10", "bg-emerald-500/35")}
+            </div>
+            <div class="border-border min-w-0 border-y @3xl:border-x @3xl:border-y-0">
+              <div class="bg-secondary/60 flex h-6 items-center gap-1 px-2 font-sans">
+                <span class="min-w-0 flex-1 truncate text-[11px] font-semibold {c ? 'text-primary' : 'text-destructive'}">
+                  Konflikt {n + 1}{c ? ` · ${label(c)}` : ""}
+                </span>
+                {#if c}
+                  <Button variant="ghost" size="sm" class="h-5 px-1.5 text-[11px]" onclick={() => choose(n, null)}>
+                    <UndoIcon class="size-3" /> Rückgängig
+                  </Button>
+                {:else if seg.base !== null}
+                  <Button variant="outline" size="sm" class="h-5 px-1.5 text-[11px]" onclick={() => choose(n, "base")}>Basis übernehmen</Button>
                 {/if}
+              </div>
+              {#if result.length}
+                <div class="bg-primary/5">{@render code(result, starts[i])}</div>
+              {:else if c}
+                <div class="text-muted-foreground bg-primary/5 px-3">(leer)</div>
+              {:else if p.base}
+                <div class="text-muted-foreground px-3 font-sans text-[11px]">Basis</div>
+                {#if p.base.length}
+                  <pre class="text-muted-foreground min-h-5 overflow-x-auto px-3 opacity-60">{p.base.join("\n")}</pre>
+                {:else}
+                  <div class="text-muted-foreground px-3 opacity-60">(leer)</div>
+                {/if}
+              {:else}
+                <div class="text-muted-foreground px-3 font-sans text-[11px] italic">offen – Seite wählen</div>
               {/if}
             </div>
-            {#if c}
-              <pre class="bg-primary/5 px-3">{render([seg], [c]).replace(/\n$/, "") || "(leer)"}</pre>
-            {:else}
-              <div class="grid grid-cols-2">
-                <div class="border-border min-w-0 border-r">
-                  <div class="text-muted-foreground bg-emerald-500/10 px-3 font-sans text-[11px] truncate" title={sides.ours}>{sides.ours}</div>
-                  <pre class="overflow-x-auto bg-emerald-500/5 px-3">{seg.ours.replace(/\n$/, "") || " "}</pre>
-                </div>
-                <div class="min-w-0">
-                  <div class="text-muted-foreground bg-sky-500/10 px-3 font-sans text-[11px] truncate" title={sides.theirs}>{sides.theirs}</div>
-                  <pre class="overflow-x-auto bg-sky-500/5 px-3">{seg.theirs.replace(/\n$/, "") || " "}</pre>
-                </div>
+            <div class="min-w-0">
+              <div class="text-muted-foreground flex h-6 items-center gap-1 bg-sky-500/10 pr-3 pl-1 font-sans text-[11px]">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="h-5 px-1"
+                  disabled={hasTheirs}
+                  onclick={() => choose(n, c === "ours" ? "ours-theirs" : "theirs")}
+                  title={c === "ours" ? `${sides.theirs} zusätzlich anhängen` : `${sides.theirs} übernehmen`}
+                >
+                  <ChevronsLeftIcon class="size-3.5" />
+                </Button>
+                <span class="min-w-0 flex-1 truncate" title={sides.theirs}>{sides.theirs}</span>
               </div>
-              {#if seg.base !== null}
-                <div class="border-border border-t">
-                  <div class="text-muted-foreground px-3 font-sans text-[11px]">Basis</div>
-                  <pre class="text-muted-foreground px-3">{seg.base.replace(/\n$/, "") || " "}</pre>
-                </div>
-              {/if}
-            {/if}
+              {@render column(p.theirs, p.theirsMarks, !!c && !hasTheirs, "bg-sky-500/10", "bg-sky-500/35")}
+            </div>
           </div>
         {/if}
       {/each}
