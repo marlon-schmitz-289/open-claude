@@ -43,8 +43,22 @@
   let pulls = $state<PullRequest[]>([]);
   let error = $state("");
 
-  // Abschnitte einzeln einklappbar, Tags/Stashes zu Beginn eingeklappt.
-  let collapsed = $state<Record<string, boolean>>({ tags: true, stashes: true });
+  // Abschnitte einzeln einklappbar. Alles startet eingeklappt; was der User aufklappt, bleibt ueber Neustarts erhalten.
+  let expanded = $state<Record<string, boolean>>(readExpanded());
+  function readExpanded(): Record<string, boolean> {
+    try {
+      return JSON.parse(localStorage.getItem("git.expanded") ?? "{}") ?? {};
+    } catch {
+      return {};
+    }
+  }
+  $effect(() => {
+    try {
+      localStorage.setItem("git.expanded", JSON.stringify(expanded));
+    } catch {
+      // Ohne localStorage gilt der Zustand nur fuer diese Sitzung.
+    }
+  });
 
   const locals = $derived(branches.filter((b) => !b.remote));
   const remoteGroups = $derived.by(() => {
@@ -234,13 +248,13 @@
       <div class="hover:bg-accent flex items-center pr-1">
         <button
           class="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold"
-          onclick={() => (collapsed.open = !collapsed.open)}
-          aria-expanded={!collapsed.open}
+          onclick={() => (expanded.open = !expanded.open)}
+          aria-expanded={expanded.open}
           title="Branches mit Commits, die noch nicht in {base} sind{merges < open.length
             ? ` · ${merges} Merges reichen, eingerückte kommen mit`
             : ''}"
         >
-          <ChevronRightIcon class="size-3 shrink-0 transition-transform {collapsed.open ? '' : 'rotate-90'}" />
+          <ChevronRightIcon class="size-3 shrink-0 transition-transform {expanded.open ? 'rotate-90' : ''}" />
           <GitMergeIcon class="size-3.5 shrink-0" />
           <span class="min-w-0 flex-1 truncate">Nicht in <span class="font-mono">{base}</span></span>
           <span class="font-mono text-[10px] {open.length ? 'text-amber-400' : 'text-muted-foreground'}"
@@ -274,7 +288,7 @@
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
       </div>
-      {#if !collapsed.open}
+      {#if expanded.open}
         <div class="pb-1">
           {#if open.length === 0}
             <p class="text-muted-foreground px-2 py-1 pl-6 text-[11px]">
@@ -321,15 +335,15 @@
   <div class="border-border border-b">
     <button
       class="hover:bg-accent flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold"
-      onclick={() => (collapsed.branches = !collapsed.branches)}
-      aria-expanded={!collapsed.branches}
+      onclick={() => (expanded.branches = !expanded.branches)}
+      aria-expanded={expanded.branches}
     >
-      <ChevronRightIcon class="size-3 shrink-0 transition-transform {collapsed.branches ? '' : 'rotate-90'}" />
+      <ChevronRightIcon class="size-3 shrink-0 transition-transform {expanded.branches ? 'rotate-90' : ''}" />
       <GitBranchIcon class="size-3.5" />
       <span class="flex-1">Branches</span>
       <span class="text-muted-foreground font-mono text-[10px]">{locals.length}</span>
     </button>
-    {#if !collapsed.branches}
+    {#if expanded.branches}
       <div class="pb-1">
         {#if locals.length === 0}
           <p class="text-muted-foreground px-2 py-1 pl-6 text-[11px]">Keine.</p>
@@ -409,15 +423,15 @@
   <div class="border-border border-b">
     <button
       class="hover:bg-accent flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold"
-      onclick={() => (collapsed.remotes = !collapsed.remotes)}
-      aria-expanded={!collapsed.remotes}
+      onclick={() => (expanded.remotes = !expanded.remotes)}
+      aria-expanded={expanded.remotes}
     >
-      <ChevronRightIcon class="size-3 shrink-0 transition-transform {collapsed.remotes ? '' : 'rotate-90'}" />
+      <ChevronRightIcon class="size-3 shrink-0 transition-transform {expanded.remotes ? 'rotate-90' : ''}" />
       <CloudIcon class="size-3.5" />
       <span class="flex-1">Remotes</span>
       <span class="text-muted-foreground font-mono text-[10px]">{branches.length - locals.length}</span>
     </button>
-    {#if !collapsed.remotes}
+    {#if expanded.remotes}
       <div class="pb-1">
         {#if remoteGroups.length === 0}
           <p class="text-muted-foreground px-2 py-1 pl-6 text-[11px]">Keine.</p>
@@ -467,15 +481,15 @@
   <div class="border-border border-b">
     <button
       class="hover:bg-accent flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold"
-      onclick={() => (collapsed.tags = !collapsed.tags)}
-      aria-expanded={!collapsed.tags}
+      onclick={() => (expanded.tags = !expanded.tags)}
+      aria-expanded={expanded.tags}
     >
-      <ChevronRightIcon class="size-3 shrink-0 transition-transform {collapsed.tags ? '' : 'rotate-90'}" />
+      <ChevronRightIcon class="size-3 shrink-0 transition-transform {expanded.tags ? 'rotate-90' : ''}" />
       <TagIcon class="size-3.5" />
       <span class="flex-1">Tags</span>
       <span class="text-muted-foreground font-mono text-[10px]">{tags.length}</span>
     </button>
-    {#if !collapsed.tags}
+    {#if expanded.tags}
       <div class="pb-1">
         {#if tags.length === 0}
           <p class="text-muted-foreground px-2 py-1 pl-6 text-[11px]">Keine.</p>
@@ -511,15 +525,15 @@
   <div class="border-border border-b">
     <button
       class="hover:bg-accent flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold"
-      onclick={() => (collapsed.stashes = !collapsed.stashes)}
-      aria-expanded={!collapsed.stashes}
+      onclick={() => (expanded.stashes = !expanded.stashes)}
+      aria-expanded={expanded.stashes}
     >
-      <ChevronRightIcon class="size-3 shrink-0 transition-transform {collapsed.stashes ? '' : 'rotate-90'}" />
+      <ChevronRightIcon class="size-3 shrink-0 transition-transform {expanded.stashes ? 'rotate-90' : ''}" />
       <ArchiveIcon class="size-3.5" />
       <span class="flex-1">Stashes</span>
       <span class="text-muted-foreground font-mono text-[10px]">{stashes.length}</span>
     </button>
-    {#if !collapsed.stashes}
+    {#if expanded.stashes}
       <div class="pb-1">
         {#if stashes.length === 0}
           <p class="text-muted-foreground px-2 py-1 pl-6 text-[11px]">Keine.</p>
@@ -560,15 +574,15 @@
     <div class="border-border border-b">
       <button
         class="hover:bg-accent flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold"
-        onclick={() => (collapsed.pulls = !collapsed.pulls)}
-        aria-expanded={!collapsed.pulls}
+        onclick={() => (expanded.pulls = !expanded.pulls)}
+        aria-expanded={expanded.pulls}
       >
-        <ChevronRightIcon class="size-3 shrink-0 transition-transform {collapsed.pulls ? '' : 'rotate-90'}" />
+        <ChevronRightIcon class="size-3 shrink-0 transition-transform {expanded.pulls ? 'rotate-90' : ''}" />
         <GitPullRequestIcon class="size-3.5" />
         <span class="flex-1">Pull Requests</span>
         <span class="text-muted-foreground font-mono text-[10px]">{pulls.length}</span>
       </button>
-      {#if !collapsed.pulls}
+      {#if expanded.pulls}
         <div class="pb-1">
           {#if pulls.length === 0}
             <p class="text-muted-foreground px-2 py-1 pl-6 text-[11px]">Keine offenen.</p>
