@@ -19,6 +19,8 @@ mod unity;
 // Skill-Manager: SKILL.md lesen, settings.local.json schreiben.
 mod skills;
 mod files;
+// Vorschau des Editors: preview-Schema, WPF-Helfer, Rueckfrage vor dem Beenden.
+mod preview;
 
 #[derive(Serialize)]
 struct Repo {
@@ -378,6 +380,21 @@ fn reopen(app: &tauri::AppHandle) {
     }
 }
 
+/// Standardmenue, aber "Beenden" (Cmd+Q) laeuft ueber preview::quit und fragt bei ungespeicherten Aenderungen.
+/// Das vordefinierte Beenden ruft terminate: und kaeme ohne Rueckfrage daran vorbei.
+// ponytail: Dock > Beenden und Abmelden rufen ebenfalls terminate:. Abfangen hiesse applicationShouldTerminate
+// im App-Delegate, das tao nicht anbietet.
+#[cfg(target_os = "macos")]
+fn menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    let menu = tauri::menu::Menu::default(app)?;
+    // Erstes Untermenue = App-Menue, sein letzter Eintrag = Beenden.
+    if let Some(sub) = menu.items()?.first().and_then(|i| i.as_submenu()) {
+        sub.remove_at(sub.items()?.len().saturating_sub(1))?;
+        sub.append(&tauri::menu::MenuItem::with_id(app, "quit", "Open Claude beenden", true, Some("Cmd+Q"))?)?;
+    }
+    Ok(menu)
+}
+
 /// Schliessen versteckt ins Tray statt zu beenden. Das Frontend setzt es aus den Einstellungen.
 static TRAY: AtomicBool = AtomicBool::new(true);
 
@@ -399,7 +416,7 @@ fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "oeffnen" => reopen(app),
-            "beenden" => app.exit(0),
+            "beenden" => preview::quit(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -446,7 +463,14 @@ pub fn run() {
             std::env::set_var("PATH", path);
         }
     }
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(menu).on_menu_event(|app, event| {
+        if event.id().as_ref() == "quit" {
+            preview::quit(app);
+        }
+    });
+    builder
         // Muss als erstes Plugin rein. Zweiter Start (z.B. neben Autostart) holt nur das Fenster vor.
         .plugin(tauri_plugin_single_instance::init(|app, _, _| reopen(app)))
         .plugin(tauri_plugin_autostart::init(
@@ -458,6 +482,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(pty::Ptys::default())
+        .manage(preview::PreviewRoots::default())
+        .register_asynchronous_uri_scheme_protocol("preview", |ctx, req, responder| {
+            preview::serve(ctx.app_handle(), req, responder)
+        })
         .invoke_handler(tauri::generate_handler![
             default_root,
             scan,
@@ -535,18 +563,25 @@ pub fn run() {
             files::fs_create,
             files::fs_rename,
             files::fs_delete,
+            files::fs_files,
+            files::fs_diff,
+            preview::preview_allow,
+            preview::xaml_render,
+            preview::editor_dirty,
             skills::skills_list,
             skills::skills_write_local
         ])
         .setup(|app| tray(app.handle()).map_err(Into::into))
         // Mit Tray (macOS: immer) versteckt Schliessen nur — raus kommt man dann ueber das Tray-Menue.
+        // Ohne Tray beendet Schliessen die App: bei ungespeicherten Aenderungen im Editor erst fragen.
         .on_window_event(|window, event| {
-            if !TRAY.load(Ordering::Relaxed) {
-                return;
-            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
+                if TRAY.load(Ordering::Relaxed) {
+                    let _ = window.hide();
+                } else {
+                    preview::quit(window.app_handle());
+                }
             }
         })
         .build(tauri::generate_context!())

@@ -3,6 +3,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
@@ -31,7 +32,7 @@ pub struct FileText {
 }
 
 /// Pfad im Repo, der auch ueber Symlinks nicht nach draussen zeigt.
-fn within(repo: &str, path: &str) -> Result<PathBuf, String> {
+pub(crate) fn within(repo: &str, path: &str) -> Result<PathBuf, String> {
     let file = inside(repo, path)?;
     let root = Path::new(repo).canonicalize().map_err(|e| format!("Projekt nicht gefunden: {e}"))?;
     // Neue Dateien gibt es noch nicht: den tiefsten vorhandenen Vorfahren pruefen.
@@ -50,9 +51,12 @@ fn within(repo: &str, path: &str) -> Result<PathBuf, String> {
 
 /// Millisekunden seit 1970; 0, wenn das Dateisystem keine Aenderungszeit liefert.
 fn mtime(path: &Path) -> Option<u64> {
-    let meta = std::fs::metadata(path).ok()?;
+    std::fs::metadata(path).ok().map(|m| millis(&m))
+}
+
+fn millis(meta: &std::fs::Metadata) -> u64 {
     let at = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok());
-    Some(at.map_or(0, |d| d.as_millis() as u64))
+    at.map_or(0, |d| d.as_millis() as u64)
 }
 
 fn list(repo: &str, dir: &str) -> Result<Vec<Entry>, String> {
@@ -97,7 +101,10 @@ fn read(repo: &str, path: &str) -> Result<FileText, String> {
     let body = raw.strip_prefix(BOM).unwrap_or(&raw);
     // ponytail: gemischte Zeilenenden werden beim Speichern zu CRLF vereinheitlicht.
     let crlf = body.contains("\r\n");
-    Ok(FileText { content: body.replace("\r\n", "\n"), crlf, bom, mtime: mtime(&file).unwrap_or(0) })
+    // Auch einzelne CR: CodeMirror macht daraus LF, der Puffer gaelte sonst sofort als geaendert.
+    let content = body.replace("\r\n", "\n").replace('\r', "\n");
+    // mtime von VOR dem Lesen: schreibt jemand dazwischen, passt sie nicht zur Platte und es wird neu geladen.
+    Ok(FileText { content, crlf, bom, mtime: millis(&meta) })
 }
 
 /// Schreibt nur, wenn die Datei seit dem Lesen unveraendert ist (`expected`), sonst Fehler "KONFLIKT".
@@ -139,13 +146,17 @@ fn write(
         if let Ok(meta) = std::fs::metadata(&target) {
             std::fs::set_permissions(&tmp, meta.permissions())?;
         }
-        std::fs::rename(&tmp, &target)
+        // Erst schliessen (Windows setzt die Zeit teils erst dann), dann mtime der eigenen Datei merken: sie bleibt
+        // beim Umbenennen erhalten, und danach koennte schon ein anderer geschrieben haben.
+        drop(f);
+        let at = millis(&std::fs::metadata(&tmp)?);
+        std::fs::rename(&tmp, &target)?;
+        Ok(at)
     })();
-    if let Err(e) = done {
+    done.map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
-        return Err(err(e));
-    }
-    Ok(mtime(&target).unwrap_or(0))
+        err(e)
+    })
 }
 
 fn create(repo: &str, path: &str, dir: bool) -> Result<(), String> {
@@ -161,11 +172,64 @@ fn create(repo: &str, path: &str, dir: bool) -> Result<(), String> {
 
 fn rename(repo: &str, from: &str, to: &str) -> Result<(), String> {
     let (src, dst) = (within(repo, from)?, within(repo, to)?);
-    // Nur Gross-/Kleinschreibung geaendert: auf Windows/macOS ist das dieselbe Datei.
-    if dst.exists() && !from.eq_ignore_ascii_case(to) {
+    // Nur Gross-/Kleinschreibung geaendert: auf Windows/macOS ist das dieselbe Datei, unter Linux evtl. eine zweite.
+    let same = || matches!((src.canonicalize(), dst.canonicalize()), (Ok(a), Ok(b)) if a == b);
+    if dst.exists() && !same() {
         return Err(format!("{to} gibt es schon."));
     }
     std::fs::rename(&src, &dst).map_err(|e| format!("Konnte {from} nicht umbenennen: {e}"))
+}
+
+/// Alle Dateien fuer Strg+P: getrackt und untracked, ohne ignorierte. Ohne Git-Repo: alle Dateien des Ordners.
+fn files(repo: &str) -> Result<Vec<String>, String> {
+    let o = exec(git(repo).args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"]), None);
+    let mut list: Vec<String> = match o {
+        Ok(o) if o.status.success() => {
+            String::from_utf8_lossy(&o.stdout).split('\0').filter(|p| !p.is_empty()).map(str::to_string).collect()
+        }
+        // ponytail: ohne git gibt es keine Ignore-Regeln (node_modules zaehlt mit), darum bei 20 000 Schluss.
+        _ => walkdir::WalkDir::new(repo)
+            .into_iter()
+            .filter_entry(|e| e.file_name() != ".git")
+            .flatten()
+            .filter(|e| e.file_type().is_file())
+            .filter_map(|e| Some(e.path().strip_prefix(repo).ok()?.to_string_lossy().replace('\\', "/")))
+            .take(20_000)
+            .collect(),
+    };
+    list.sort();
+    list.dedup();
+    Ok(list)
+}
+
+/// Unified Diff Platte -> `content` im Format von `git diff`, damit der Frontend-Parser ihn liest.
+fn diff(repo: &str, path: &str, content: &str) -> Result<String, String> {
+    static N: AtomicU32 = AtomicU32::new(0);
+    // Geloescht auf der Platte: gegen leer vergleichen.
+    let disk = if within(repo, path)?.exists() { read(repo, path)?.content } else { String::new() };
+    if disk == content {
+        return Ok(String::new());
+    }
+    let tmp = |side: &str| {
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("ocui-diff-{}-{n}-{side}", std::process::id()))
+    };
+    let (a, b) = (tmp("a"), tmp("b"));
+    let res = std::fs::write(&a, disk)
+        .and_then(|()| std::fs::write(&b, content))
+        .map_err(|e| format!("Vergleich fehlgeschlagen: {e}"))
+        .and_then(|()| exec(git(repo).args(["-c", "core.autocrlf=false", "diff", "--no-index", "--no-color", "--no-ext-diff", "--"]).arg(&a).arg(&b), None));
+    let _ = std::fs::remove_file(&a);
+    let _ = std::fs::remove_file(&b);
+    let o = res?;
+    // --no-index: 1 = Unterschiede, alles darueber ist ein Fehler.
+    if o.status.code() != Some(1) {
+        return Err(String::from_utf8_lossy(&o.stderr).trim().to_string());
+    }
+    // Der Kopf nennt die Temp-Dateien: durch den Repo-Pfad ersetzen.
+    let out = String::from_utf8_lossy(&o.stdout);
+    let hunks = out.find("\n@@").map_or("", |i| &out[i + 1..]);
+    Ok(format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n{hunks}"))
 }
 
 #[tauri::command]
@@ -201,6 +265,16 @@ pub async fn fs_stat(repo: String, paths: Vec<String>) -> Result<Vec<Option<u64>
             .collect())
     })
     .await
+}
+
+#[tauri::command]
+pub async fn fs_files(repo: String) -> Result<Vec<String>, String> {
+    blocking(move || files(&repo)).await
+}
+
+#[tauri::command]
+pub async fn fs_diff(repo: String, path: String, content: String) -> Result<String, String> {
+    blocking(move || diff(&repo, &path, &content)).await
 }
 
 #[tauri::command]
@@ -298,5 +372,72 @@ mod tests {
         assert!(rename(&repo, "src/neu.rs", "b.bin").is_err());
         rename(&repo, "src/neu.rs", "src/alt.rs").unwrap();
         assert!(Path::new(&repo).join("src/alt.rs").exists());
+        // Ohne Git-Repo (.git ist hier nur ein leerer Ordner) laeuft Strg+P ueber den Ordner selbst.
+        assert_eq!(files(&repo).unwrap(), ["b.bin", "src/alt.rs"]);
+    }
+
+    #[test]
+    fn umbenennen_nur_gross_klein() {
+        let repo = tmp("gross");
+        let at = |p: &str| Path::new(&repo).join(p);
+        std::fs::write(at("readme.md"), "klein").unwrap();
+        // Auf Dateisystemen mit Gross-/Kleinschreibung ist README.md eine zweite Datei und bleibt unberuehrt.
+        let zwei = !at("README.md").exists();
+        if zwei {
+            std::fs::write(at("README.md"), "gross").unwrap();
+            assert!(rename(&repo, "readme.md", "README.md").is_err());
+            assert_eq!(std::fs::read_to_string(at("README.md")).unwrap(), "gross");
+        } else {
+            rename(&repo, "readme.md", "README.md").unwrap();
+            let names: Vec<_> = list(&repo, "").unwrap().into_iter().map(|e| e.name).collect();
+            assert_eq!(names, ["src", "README.md"]);
+        }
+    }
+
+    #[test]
+    fn einzelnes_cr_wird_lf() {
+        let repo = tmp("cr");
+        std::fs::write(Path::new(&repo).join("a.txt"), "a\rb\r\r\nc").unwrap();
+        let t = read(&repo, "a.txt").unwrap();
+        assert_eq!((t.content.as_str(), t.crlf), ("a\nb\n\nc", true));
+    }
+
+    #[test]
+    fn mtime_passt_zur_platte() {
+        let repo = tmp("mtime");
+        let file = Path::new(&repo).join("a.txt");
+        let neu = write(&repo, "a.txt", "x", false, false, None, false).unwrap();
+        assert_eq!(Some(neu), mtime(&file));
+        assert_eq!(read(&repo, "a.txt").unwrap().mtime, neu);
+        // Mit der gelieferten mtime geht das naechste Speichern ohne Konflikt durch.
+        write(&repo, "a.txt", "y", false, false, Some(neu), false).unwrap();
+    }
+
+    #[test]
+    fn diff_gegen_platte() {
+        let repo = tmp("diff");
+        std::fs::write(Path::new(&repo).join("a.txt"), "eins\r\nzwei\r\n").unwrap();
+        // Zeilenenden sind wie beim Lesen normalisiert: kein Unterschied.
+        assert_eq!(diff(&repo, "a.txt", "eins\nzwei\n").unwrap(), "");
+        let d = diff(&repo, "a.txt", "eins\ndrei\n").unwrap();
+        let head = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n";
+        assert!(d.starts_with(head), "{d}");
+        assert!(d.contains("\n-zwei\n+drei\n"), "{d}");
+        // Datei fehlt auf der Platte: alles ist neu.
+        let neu = diff(&repo, "src/neu.txt", "x\n").unwrap();
+        assert!(neu.contains("+++ b/src/neu.txt\n@@ -0,0 +1 @@\n+x\n"), "{neu}");
+        assert!(diff(&repo, "../a.txt", "x").is_err());
+    }
+
+    #[test]
+    fn dateiliste_ohne_ignorierte() {
+        let repo = tmp("dateien");
+        assert!(exec(git(&repo).arg("init"), None).unwrap().status.success());
+        for (p, c) in [(".gitignore", "weg/\n"), ("src/b.rs", ""), ("a.txt", "")] {
+            std::fs::write(Path::new(&repo).join(p), c).unwrap();
+        }
+        std::fs::create_dir_all(Path::new(&repo).join("weg")).unwrap();
+        std::fs::write(Path::new(&repo).join("weg/x.txt"), "").unwrap();
+        assert_eq!(files(&repo).unwrap(), [".gitignore", "a.txt", "src/b.rs"]);
     }
 }

@@ -14,11 +14,13 @@
     status,
     onchange,
     onconflict,
+    onedit,
   }: {
     repo: string;
     status: Status;
     onchange: () => void;
     onconflict: (path: string) => void;
+    onedit?: (path: string) => void;
   } = $props();
 
   const conflicts = $derived(status.files.filter((f) => f.conflict));
@@ -256,6 +258,9 @@
               {@render menuItem(isStaged ? "Unstagen" : "Stagen", () => toggle(f, isStaged))}
               {#if !isStaged}
                 {@render menuItem("Änderungen verwerfen …", () => discard(f), true)}
+              {/if}
+              {#if onedit && code !== "D"}
+                {@render menuItem("Im Editor öffnen", () => onedit(f.path))}
               {/if}
               {@render menuItem("Im Explorer zeigen", () => reveal(f))}
               {@render menuItem("Pfad kopieren", () => navigator.clipboard.writeText(f.path))}

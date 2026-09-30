@@ -39,6 +39,10 @@
   import IdleAmongUs from "$lib/components/IdleAmongUs.svelte";
   import Terminal from "$lib/components/Terminal.svelte";
   import GitView from "$lib/components/git/GitView.svelte";
+  import EditorView from "$lib/components/editor/EditorView.svelte";
+  import { drop, isDirty, open as openFile } from "$lib/editor.svelte";
+  import { editorDirty } from "$lib/files";
+  import FileCodeIcon from "@lucide/svelte/icons/file-code";
   import CloneDialog from "$lib/components/git/CloneDialog.svelte";
   import AccountsDialog from "$lib/components/git/AccountsDialog.svelte";
   import { git, forge, type Account } from "$lib/git";
@@ -118,8 +122,14 @@
   // Git-Ansicht ueberdeckt Liste und Terminal; Terminals laufen darunter weiter.
   let gitRepo = $state<Repo | null>(null);
   let gitView = $state<GitView>();
-  const view = $derived(gitRepo ? "git" : active ? "term" : "list");
-  const viewRepo = $derived(gitRepo ?? activeSession?.repo);
+  // Editor-Ansicht: wie Git nur gemountet, solange sie zu sehen ist; die Puffer liegen in $lib/editor.svelte.
+  let editRepo = $state<Repo | null>(null);
+  const view = $derived(editRepo ? "edit" : gitRepo ? "git" : active ? "term" : "list");
+  const viewRepo = $derived(editRepo ?? gitRepo ?? activeSession?.repo);
+  // Rust fragt vor dem Beenden nach, solange irgendwo ungespeicherte Aenderungen liegen.
+  $effect(() => {
+    editorDirty(isDirty()).catch(() => {});
+  });
   let cloneOpen = $state(false);
   let accountsOpen = $state(false);
   let accounts = $state<Account[]>([]);
@@ -239,6 +249,8 @@
   });
 
   async function installUpdate() {
+    // Der Neustart laeuft an der Rueckfrage in Rust vorbei.
+    if (isDirty() && !window.confirm("Ungespeicherte Änderungen im Editor verwerfen und neu starten?")) return;
     updating = true;
     try {
       await update!.downloadAndInstall();
@@ -387,6 +399,7 @@
     // Nie konfigurierte Projekte bleiben unberuehrt.
     if (!isFree(repo) && !running.has(repo.path) && managed(skillStore, repo.path, repo.kind)) await syncSkills([repo.path]);
     leaveGit();
+    editRepo = null;
     let s = sessions.find((s) => s.repo.path === repo.path);
     // Eindeutig pro Seitenladung: nach einem Neuladen laufen alte PTYs evtl. noch unter "t1"
     if (!s) sessions.push((s = { id: crypto.randomUUID(), repo }));
@@ -408,7 +421,17 @@
   function openGit(repo?: Repo) {
     if (!repo) return;
     active = null;
+    editRepo = null;
     gitRepo = repo;
+  }
+
+  /** Editor-Ansicht fuer das Projekt; Terminal laeuft weiter, ungespeicherte Puffer bleiben beim Wechsel erhalten. */
+  function openEdit(repo?: Repo) {
+    if (!repo || isFree(repo)) return;
+    if (gitRepo && gitView && !gitView.canLeave()) return;
+    leaveGit();
+    active = null;
+    editRepo = repo;
   }
 
   /** Nach dem Klonen neu einlesen und das neue Projekt markieren. */
@@ -535,6 +558,8 @@
       sessions = sessions.filter((s) => s.repo.path !== repo.path);
       await tick();
       await invoke("trash_repo", { path: repo.path, root });
+      // Der Dialog hat das Loeschen schon bestaetigt: Puffer des Projekts ohne zweite Frage verwerfen.
+      drop(repo.path, true);
       repos = repos.filter((r) => r.path !== repo.path);
       if (pins.includes(repo.path)) await togglePin(repo.path);
       await store.set("cache", { root, repos, at: scannedAt } satisfies Cache);
@@ -548,6 +573,9 @@
 
   async function back() {
     if (gitRepo && gitView && !gitView.canLeave()) return;
+    // Zurueck zur Liste schliesst den Editor des Projekts: bei ungespeicherten Aenderungen fragt drop nach.
+    if (editRepo && !drop(editRepo.path)) return;
+    editRepo = null;
     active = null;
     leaveGit();
     await tick();
@@ -583,9 +611,14 @@
   function onKey(e: KeyboardEvent) {
     // Im Terminal gehoeren fast alle Kuerzel der Shell (Readline: Strg+R/K/E/P/O/G ...).
     // Die Git-Ansicht hat ihre eigenen Kuerzel in GitView.svelte.
+    // Der Editor hat Strg+S/Esc selbst (EditorView, CodeMirror); Esc verlaesst ihn nicht.
     if (view !== "list") {
       const alt = e.altKey && !e.ctrlKey;
-      if ((e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "w") || (e.shiftKey && e.key === "Escape")) {
+      // Mit Umschalt: Strg+E gehoert im Terminal der Shell.
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        openEdit(viewRepo);
+      } else if ((e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "w") || (e.shiftKey && e.key === "Escape")) {
         e.preventDefault();
         back();
       } else if (e.key === "Escape" && view === "git") {
@@ -598,9 +631,9 @@
       } else if (alt && e.key.toLowerCase() === "e") {
         e.preventDefault();
         reveal(viewRepo);
-      } else if (alt && e.key.toLowerCase() === "g" && view === "term" && !isFree(activeSession?.repo)) {
+      } else if (alt && e.key.toLowerCase() === "g" && view !== "git" && !isFree(viewRepo)) {
         e.preventDefault();
-        openGit(activeSession?.repo);
+        openGit(viewRepo);
       }
       return;
     }
@@ -623,6 +656,8 @@
       rescan();
     } else if (ctrl && e.key.toLowerCase() === "o") {
       pickRoot();
+    } else if (ctrl && e.shiftKey && e.key.toLowerCase() === "e") {
+      openEdit(current?.repo);
     } else if (ctrl && e.key.toLowerCase() === "e") {
       reveal(current?.repo);
     } else if (ctrl && e.key.toLowerCase() === "p") {
@@ -696,6 +731,7 @@
         onclick={() => launch(gitRepo!)}
         title="Claude im Projekt öffnen"><TerminalIcon class="size-3.5" /> Claude</Button
       >
+      {@render editButton(gitRepo)}
       <Button
         variant="ghost"
         size="sm"
@@ -711,7 +747,23 @@
         title="Aktualisieren (F5)"
         aria-label="Aktualisieren"><RefreshIcon class="size-3.5" /></Button
       >
+    {:else if view === "edit" && editRepo}
+      <Button
+        variant="ghost"
+        size="sm"
+        class="text-muted-foreground h-6 gap-1.5 text-[11px]"
+        onclick={() => launch(editRepo!)}
+        title="Claude im Projekt öffnen"><TerminalIcon class="size-3.5" /> Claude</Button
+      >
+      <Button
+        variant="ghost"
+        size="sm"
+        class="text-muted-foreground mr-1 h-6 gap-1.5 text-[11px]"
+        onclick={() => openGit(editRepo!)}
+        title="Git-Ansicht (Alt+G)"><GitBranchIcon class="size-3.5" /> Git</Button
+      >
     {:else if activeSession}
+      {#if !isFree(activeSession.repo)}{@render editButton(activeSession.repo)}{/if}
       <Button
         variant="ghost"
         size="sm"
@@ -1052,6 +1104,7 @@
                     class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-52 rounded-lg p-1 text-xs shadow-lg ring-1"
                   >
                     {@render repoItem("Git-Ansicht", "Strg+G", () => openGit(item.repo))}
+                    {@render repoItem("Editor", "Strg+⇧+E", () => openEdit(item.repo))}
                     {@render repoItem(running.has(item.repo.path) ? "Zur Claude-Sitzung" : "Claude starten", "Strg+⏎", () => launch(item.repo))}
                     <ContextMenu.Separator class="bg-border my-1 h-px" />
                     {@render repoItem(mac ? "Im Finder zeigen" : "Im Explorer zeigen", "Strg+E", () => reveal(item.repo))}
@@ -1088,6 +1141,14 @@
     {/each}
   </div>
 
+  {#if editRepo}
+    <div class="min-h-0 flex-1">
+      {#key editRepo.path}
+        <EditorView repo={editRepo.path} />
+      {/key}
+    </div>
+  {/if}
+
   {#if gitRepo}
     <div class="min-h-0 flex-1">
       {#key gitRepo.path}
@@ -1098,6 +1159,11 @@
           kind={gitRepo.kind}
           {skillStore}
           onskills={(ps) => setProjectSkills(gitRepo!.path, ps)}
+          onedit={(path) => {
+            const repo = gitRepo!;
+            openEdit(repo);
+            if (editRepo?.path === repo.path) openFile(repo.path, path);
+          }}
           {accounts}
           onaccounts={() => (accountsOpen = true)}
         />
@@ -1127,6 +1193,16 @@
     </button>
   </footer>
 </div>
+
+{#snippet editButton(repo: Repo)}
+  <Button
+    variant="ghost"
+    size="sm"
+    class="text-muted-foreground h-6 gap-1.5 text-[11px]"
+    onclick={() => openEdit(repo)}
+    title="Editor (Strg+Umschalt+E)"><FileCodeIcon class="size-3.5" /> Editor</Button
+  >
+{/snippet}
 
 {#snippet repoItem(label: string, key: string, onSelect: () => void, destructive = false)}
   <ContextMenu.Item
@@ -1190,6 +1266,7 @@
         ["↑ ↓", "Projekt wählen"],
         ["Strg + 1 … 9", "Claude im Treffer starten"],
         ["Strg + G", "Git-Ansicht öffnen"],
+        ["Strg + ⇧ + E", "Editor öffnen"],
         ["Strg + N", "Repo klonen"],
         ["Strg + K", "Suche fokussieren"],
         ["Strg + P", "Projekt anpinnen"],
@@ -1201,11 +1278,17 @@
         ["Esc", "Suche leeren, sonst schließen (bzw. ins Tray)"],
       ])}
       <div class="grid content-start gap-6">
-        {@render keys("Terminal und Git", [
+        {@render keys("Terminal, Git und Editor", [
           ["⇧ + Esc / Strg + ⇧ + W", "Zurück zur Liste, Sitzung läuft weiter"],
           ["Alt + E", "Ordner im Explorer öffnen"],
-          ["Alt + G", "Im Terminal: Git-Ansicht öffnen"],
+          ["Alt + G", "Im Terminal und Editor: Git-Ansicht öffnen"],
+          ["Strg + ⇧ + E", "Editor öffnen"],
           ["Strg + ⇧ + C / Strg + V", "Im Terminal: kopieren / einfügen"],
+        ])}
+        {@render keys("Editor", [
+          ["Strg + S", "Datei speichern"],
+          ["Strg + P", "Datei suchen und öffnen"],
+          ["Tab ziehen", "Umsortieren, an eine Kante ziehen teilt den Bereich"],
         ])}
         {@render keys("Git-Ansicht", [
           ["Esc", "Zurück zur Liste"],

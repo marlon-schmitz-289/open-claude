@@ -235,7 +235,8 @@ pub(crate) fn inside(repo: &str, path: &str) -> Result<PathBuf, String> {
         Component::Normal(n) => {
             let n = n.to_string_lossy();
             let n = n.trim_end_matches(['.', ' ']);
-            n.eq_ignore_ascii_case(".git") || n.eq_ignore_ascii_case("git~1")
+            // NTFS-Datenstroeme: ".git::$INDEX_ALLOCATION" oeffnet unter Windows den Ordner .git.
+            n.eq_ignore_ascii_case(".git") || n.eq_ignore_ascii_case("git~1") || (cfg!(windows) && n.contains(':'))
         }
         _ => true,
     };
@@ -1485,6 +1486,10 @@ refs/remotes/origin/feature/x\x1f \x1f\x1f\x1fs3\x1fd\x1fsub: mit doppelpunkt\n"
         assert!(inside("C:/r", "a/.git . /config").is_err());
         assert!(inside("C:/r", "GIT~1/config").is_err());
         assert!(inside("C:/r", ".gitignore").is_ok());
+        // Unter Unix ist ":" ein gewoehnliches Zeichen im Dateinamen.
+        for stream in [".git::$INDEX_ALLOCATION/config", "a.txt::$DATA"] {
+            assert_eq!(inside("C:/r", stream).is_err(), cfg!(windows), "{stream}");
+        }
         assert!(arg("-x").is_err() && arg("main").is_ok());
     }
 

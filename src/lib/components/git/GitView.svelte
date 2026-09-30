@@ -38,6 +38,7 @@
     kind = null,
     skillStore,
     onskills,
+    onedit,
   }: {
     repo: string;
     accounts: Account[];
@@ -46,6 +47,7 @@
     kind?: string | null;
     skillStore: SkillStore;
     onskills: (ps: ProjectSkills) => void;
+    onedit?: (path: string) => void;
   } = $props();
 
   const isUnity = $derived(unity);
@@ -408,7 +410,7 @@
           <div class="min-h-0 flex-1">
             <!-- Einmal geoeffnet bleiben alle gemountet: Auswahl und Scrollstand ueberleben den Tabwechsel. -->
             <div class="h-full {tab === 'changes' ? '' : 'hidden'}">
-              <ChangesPanel {repo} {status} onchange={refresh} onconflict={(p) => (conflictPath = p)} />
+              <ChangesPanel {repo} {status} {onedit} onchange={refresh} onconflict={(p) => (conflictPath = p)} />
             </div>
             <div class="h-full {tab === 'history' ? '' : 'hidden'}">
               <HistoryPanel {repo} {jumpTo} {refreshKey} busy={!!busy} {track} onchange={refresh} />
