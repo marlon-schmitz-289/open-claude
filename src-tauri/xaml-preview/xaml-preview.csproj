@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Helfer der WPF-Vorschau: XAML auf stdin, PNG auf stdout. Bauen: dotnet publish -c Release -o publish -->
+  <PropertyGroup>
+    <!-- Exe statt WinExe: fehlt die Runtime, schreibt der Apphost nach stderr statt einen Dialog zu zeigen. -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <AssemblyName>xaml-preview</AssemblyName>
+    <RootNamespace>XamlPreview</RootNamespace>
+    <!-- Framework-abhaengig: die .NET Desktop Runtime installiert der Nutzer selbst; neuere Hauptversionen gelten auch. -->
+    <SelfContained>false</SelfContained>
+    <RollForward>LatestMajor</RollForward>
+    <DebugType>none</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- CI baut auf Windows; der Schalter erlaubt den Compile-Check auch auf macOS/Linux. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <DefaultItemExcludes>$(DefaultItemExcludes);publish/**</DefaultItemExcludes>
+  </PropertyGroup>
+</Project>
