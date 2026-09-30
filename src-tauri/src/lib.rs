@@ -18,6 +18,7 @@ mod git;
 mod unity;
 // Skill-Manager: SKILL.md lesen, settings.local.json schreiben.
 mod skills;
+mod files;
 
 #[derive(Serialize)]
 struct Repo {
@@ -527,6 +528,13 @@ pub fn run() {
             unity::unity_open,
             unity::unity_close,
             unity::unity_test,
+            files::fs_list,
+            files::fs_read,
+            files::fs_write,
+            files::fs_stat,
+            files::fs_create,
+            files::fs_rename,
+            files::fs_delete,
             skills::skills_list,
             skills::skills_write_local
         ])

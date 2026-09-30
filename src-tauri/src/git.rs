@@ -104,7 +104,7 @@ pub struct Conflict {
 // ---------- Prozess ----------
 
 /// git im Repo, ohne Prompts, Editor und Farben; englische Meldungen zum Parsen.
-fn git(repo: &str) -> Command {
+pub(crate) fn git(repo: &str) -> Command {
     let mut cmd = crate::quiet("git");
     cmd.arg("-C")
         .arg(repo)
@@ -132,7 +132,7 @@ fn lit(repo: &str) -> Command {
     cmd
 }
 
-fn exec(cmd: &mut Command, input: Option<&[u8]>) -> Result<Output, String> {
+pub(crate) fn exec(cmd: &mut Command, input: Option<&[u8]>) -> Result<Output, String> {
     let res = match input {
         None => cmd.output(),
         Some(data) => cmd
@@ -228,7 +228,7 @@ fn branch_name<'a>(repo: &str, name: &'a str) -> Result<&'a str, String> {
 }
 
 /// Relativer Pfad im Repo, ohne `..`, absolute Anteile oder `.git`.
-fn inside(repo: &str, path: &str) -> Result<PathBuf, String> {
+pub(crate) fn inside(repo: &str, path: &str) -> Result<PathBuf, String> {
     let p = Path::new(path);
     let bad = |c: Component| match c {
         // Windows oeffnet ".git." bzw. ".git " als .git, der 8.3-Kurzname ist GIT~1.
