@@ -21,6 +21,8 @@
   import KeyboardIcon from "@lucide/svelte/icons/keyboard";
   import StarIcon from "@lucide/svelte/icons/star";
   import PowerIcon from "@lucide/svelte/icons/power";
+  import CircleQuestionMarkIcon from "@lucide/svelte/icons/circle-question-mark";
+  import { ASKS, noAsk, setNoAsk, type AskKey } from "$lib/ask.svelte";
   import InboxIcon from "@lucide/svelte/icons/inbox";
   import GhostIcon from "@lucide/svelte/icons/ghost";
   import VolumeIcon from "@lucide/svelte/icons/volume-2";
@@ -890,6 +892,11 @@
                   />
                 </label>
               {/if}
+              <DropdownMenu.Separator class="bg-border my-1 h-px" />
+              <p class="text-muted-foreground px-2 py-1 text-[10px]">Git: Rückfrage vor</p>
+              {#each Object.entries(ASKS) as [key, label] (key)}
+                {@render setting(label, !noAsk[key], () => setNoAsk(key as AskKey, !noAsk[key]), CircleQuestionMarkIcon)}
+              {/each}
               <DropdownMenu.Separator class="bg-border my-1 h-px" />
               <DropdownMenu.Item
                 class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5"

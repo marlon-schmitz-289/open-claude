@@ -19,11 +19,14 @@
   import ArrowDownIcon from "@lucide/svelte/icons/arrow-down";
   import GitMergeIcon from "@lucide/svelte/icons/git-merge";
   import { age } from "$lib/utils";
+  import { ask } from "$lib/ask.svelte";
 
   let {
     repo,
     status,
     refreshKey,
+    busy,
+    track,
     onchange,
     onselectref,
     onshowdiff,
@@ -31,6 +34,9 @@
     repo: string;
     status: Status;
     refreshKey: number;
+    /** Laeuft gerade eine Git-Aktion (auch aus Toolbar/Verlauf): solange ist die Seitenleiste gesperrt. */
+    busy: boolean;
+    track: <T>(label: string, action: () => Promise<T>) => Promise<T>;
     onchange: () => void;
     onselectref: (ref: string) => void;
     onshowdiff: (title: string, diff: string) => void;
@@ -81,7 +87,7 @@
       .filter((b) => b !== undefined)
       .map((b) => b.name),
   );
-  const setBase = (b: string | null) => run(() => git.setBase(repo, b));
+  const setBase = (b: string | null) => run("Production-Branch", () => git.setBase(repo, b));
   // Die Basis selbst und ihr lokales Gegenstueck (master -> origin/master) sind nie "offen".
   const isBase = (b: Branch) => b.name === base || b.upstream === base;
   const merged = (b: Branch) => b.unmerged === 0 && !isBase(b) && !b.current;
@@ -163,10 +169,11 @@
     load();
   });
 
-  async function run<T>(action: () => Promise<T>) {
+  async function run<T>(label: string, action: () => Promise<T>) {
+    if (busy) return;
     error = "";
     try {
-      await action();
+      await track(label, action);
       onchange();
       await load();
     } catch (e) {
@@ -181,9 +188,9 @@
   }
   async function doConfirm() {
     if (!confirm) return;
-    const action = confirm.run;
+    const { title, run: action } = confirm;
     confirm = null;
-    await run(action);
+    await run(title, action);
   }
 
   // Texteingabe fuer Umbenennen / Neuer Branch.
@@ -195,19 +202,19 @@
   }
   async function doPrompt() {
     if (!prompt) return;
-    const action = prompt.run;
+    const { title, run: action } = prompt;
     const value = promptValue.trim();
     prompt = null;
-    if (value) await run(() => action(value));
+    if (value) await run(title, () => action(value));
   }
 
-  function checkoutLocal(b: Branch) {
-    run(() => git.checkout(repo, b.name, false, null));
-  }
-  function checkoutRemote(b: Branch) {
-    // Das Backend wechselt auf einen vorhandenen lokalen Branch oder legt den Tracking-Branch an
-    // (Name ueber die echten Remotes, auch bei "up/stream/x").
-    run(() => git.checkout(repo, b.name, false, null));
+  // Lokal wie remote: das Backend wechselt auf einen vorhandenen lokalen Branch oder legt den
+  // Tracking-Branch an (Name ueber die echten Remotes, auch bei "up/stream/x").
+  function checkout(b: Branch) {
+    if (b.current) return;
+    ask("checkout", "Branch wechseln", `Auf „${b.name}“ wechseln?`, () =>
+      run("Branch-Wechsel", () => git.checkout(repo, b.name, false, null)),
+    );
   }
 
   async function showStash(s: Stash) {
@@ -239,7 +246,7 @@
   </DropdownMenu.Item>
 {/snippet}
 
-<div class="flex h-full flex-col overflow-y-auto text-xs">
+<div class="flex h-full flex-col overflow-y-auto text-xs {busy ? 'pointer-events-none opacity-60' : ''}" aria-busy={busy}>
   <Notice bind:text={error} />
 
   <!-- Noch nicht in die Basis gemergt: Ueberblick ueber alle offenen Branches -->
@@ -302,7 +309,7 @@
                 : ''}"
               style="padding-left:{24 + depth * 12}px"
               onclick={() => onselectref(b.sha)}
-              ondblclick={() => (b.remote ? checkoutRemote(b) : checkoutLocal(b))}
+              ondblclick={() => checkout(b)}
               title="{b.name}: {b.unmerged} {b.unmerged === 1 ? 'Commit' : 'Commits'} noch nicht in {base}{within[b.name]
                 ? ` · schon in ${within[b.name]}, kommt mit dessen Merge`
                 : ''} · letzter: {b.subject}"
@@ -355,7 +362,7 @@
                 class="hover:bg-accent flex w-full items-center gap-1.5 px-2 py-1 pl-6 text-left text-[11px] {b.current
                   ? 'text-primary font-semibold'
                   : ''} {merged(b) ? 'opacity-50' : ''}"
-                ondblclick={() => checkoutLocal(b)}
+                ondblclick={() => checkout(b)}
                 onclick={() => onselectref(b.sha)}
                 title={merged(b) ? `In ${base} gemergt` : undefined}
               >
@@ -376,10 +383,18 @@
               <ContextMenu.Content
                 class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-44 rounded-md p-1 text-xs ring-1"
               >
-                {@render menuItem("Auschecken", () => checkoutLocal(b))}
+                {@render menuItem("Auschecken", () => checkout(b))}
                 {#if !b.current}
-                  {@render menuItem("In aktuellen mergen", () => run(() => git.merge(repo, b.name, false)))}
-                  {@render menuItem("Aktuellen darauf rebasen", () => run(() => git.rebase(repo, b.name)))}
+                  {@render menuItem("In aktuellen mergen", () =>
+                    ask("merge", "Mergen", `„${b.name}“ in ${status.branch ?? "HEAD"} mergen?`, () =>
+                      run("Merge", () => git.merge(repo, b.name, false)),
+                    ),
+                  )}
+                  {@render menuItem("Aktuellen darauf rebasen", () =>
+                    ask("rebase", "Rebasen", `${status.branch ?? "HEAD"} auf „${b.name}“ rebasen?`, () =>
+                      run("Rebase", () => git.rebase(repo, b.name)),
+                    ),
+                  )}
                 {/if}
                 {#if b.name !== base}
                   {@render menuItem("Als Production-Branch festlegen", () => setBase(b.name))}
@@ -445,7 +460,7 @@
                   class="hover:bg-accent flex w-full items-center gap-1.5 px-2 py-1 pl-6 text-left text-[11px] {merged(b)
                     ? 'opacity-50'
                     : ''}"
-                  ondblclick={() => checkoutRemote(b)}
+                  ondblclick={() => checkout(b)}
                   onclick={() => onselectref(b.sha)}
                   title={merged(b) ? `In ${base} gemergt` : undefined}
                 >
@@ -456,7 +471,7 @@
                 <ContextMenu.Content
                   class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-44 rounded-md p-1 text-xs ring-1"
                 >
-                  {@render menuItem("Auschecken (Tracking-Branch)", () => checkoutRemote(b))}
+                  {@render menuItem("Auschecken (Tracking-Branch)", () => checkout(b))}
                   {#if b.name !== base}
                     {@render menuItem("Als Production-Branch festlegen", () => setBase(b.name))}
                   {/if}
@@ -553,8 +568,16 @@
               <ContextMenu.Content
                 class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-44 rounded-md p-1 text-xs ring-1"
               >
-                {@render menuItem("Anwenden", () => run(() => git.stashApply(repo, s.index, false)))}
-                {@render menuItem("Pop", () => run(() => git.stashApply(repo, s.index, true)))}
+                {@render menuItem("Anwenden", () =>
+                  ask("stash", "Stash anwenden", `„${s.message}“ anwenden?`, () =>
+                    run("Stash", () => git.stashApply(repo, s.index, false)),
+                  ),
+                )}
+                {@render menuItem("Pop", () =>
+                  ask("stash", "Stash anwenden", `„${s.message}“ anwenden und aus der Liste entfernen?`, () =>
+                    run("Stash", () => git.stashApply(repo, s.index, true)),
+                  ),
+                )}
                 {@render menuItem("Anzeigen", () => showStash(s))}
                 {@render menuItem(
                   "Löschen",

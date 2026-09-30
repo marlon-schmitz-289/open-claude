@@ -11,12 +11,16 @@
   import { layout, type Row } from "$lib/graph";
   import { parseDiff } from "$lib/diff";
   import DiffView from "$lib/components/git/DiffView.svelte";
+  import { ask } from "$lib/ask.svelte";
   import Splitter, { stored } from "$lib/components/Splitter.svelte";
   import SearchIcon from "@lucide/svelte/icons/search";
   import CopyIcon from "@lucide/svelte/icons/copy";
 
-  let { repo, onchange, jumpTo = null, refreshKey = 0 }: {
+  let { repo, onchange, busy, track, jumpTo = null, refreshKey = 0 }: {
     repo: string;
+    /** Laeuft gerade eine Git-Aktion: keine zweite starten. Anzeige macht GitView ueber track. */
+    busy: boolean;
+    track: <T>(label: string, action: () => Promise<T>) => Promise<T>;
     onchange: () => void;
     jumpTo?: string | null;
     /** Aendert der Aufrufer nach jeder Aktion, dann laedt der Verlauf neu. */
@@ -197,10 +201,11 @@
     copied: "C",
   };
 
-  async function run(action: () => Promise<unknown>) {
+  async function run(label: string, action: () => Promise<unknown>) {
+    if (busy) return;
     error = "";
     try {
-      await action();
+      await track(label, action);
       onchange();
     } catch (e) {
       error = String(e);
@@ -213,9 +218,9 @@
   }
   async function doConfirm() {
     if (!confirm) return;
-    const action = confirm.run;
+    const { title, run: action } = confirm;
     confirm = null;
-    await run(action);
+    await run(title, action);
   }
 
   let prompt = $state<{ title: string; run: (v: string) => Promise<void> } | null>(null);
@@ -226,10 +231,10 @@
   }
   async function doPrompt() {
     if (!prompt) return;
-    const action = prompt.run;
+    const { title, run: action } = prompt;
     const value = promptValue.trim();
     prompt = null;
-    if (value) await run(() => action(value));
+    if (value) await run(title, () => action(value));
   }
 
   function copySha(sha: string) {
@@ -333,8 +338,16 @@
             await git.checkout(repo, c.sha, false, null);
           }),
         )}
-        {@render menuItem("Cherry-Pick", () => run(() => git.cherryPick(repo, c.sha)))}
-        {@render menuItem("Revert", () => run(() => git.revert(repo, c.sha)))}
+        {@render menuItem("Cherry-Pick", () =>
+          ask("pick", "Cherry-Pick", `${c.sha.slice(0, 8)} auf den aktuellen Branch übernehmen?`, () =>
+            run("Cherry-Pick", () => git.cherryPick(repo, c.sha)),
+          ),
+        )}
+        {@render menuItem("Revert", () =>
+          ask("pick", "Revert", `${c.sha.slice(0, 8)} mit einem neuen Commit rückgängig machen?`, () =>
+            run("Revert", () => git.revert(repo, c.sha)),
+          ),
+        )}
         {@render menuItem("Reset: soft", () => reset(c.sha, "soft"))}
         {@render menuItem("Reset: mixed", () => reset(c.sha, "mixed"))}
         {@render menuItem("Reset: hard", () => reset(c.sha, "hard"), true)}

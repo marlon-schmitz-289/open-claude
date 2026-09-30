@@ -7,6 +7,7 @@
   import { Input } from "$lib/components/ui/input/index.js";
   import { git, forge, accountId, type Account, type ForgeKind, type RepoAccount, type Status } from "$lib/git";
   import Sidebar from "./Sidebar.svelte";
+  import AskDialog from "./AskDialog.svelte";
   import ChangesPanel from "./ChangesPanel.svelte";
   import HistoryPanel from "./HistoryPanel.svelte";
   import ReleasesPanel from "./ReleasesPanel.svelte";
@@ -27,6 +28,7 @@
   import TriangleAlertIcon from "@lucide/svelte/icons/triangle-alert";
   import UserIcon from "@lucide/svelte/icons/user";
   import CheckIcon from "@lucide/svelte/icons/check";
+  import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
 
   let {
     repo,
@@ -153,6 +155,16 @@
     await refresh(true, ["Fetch", "Pull", "Push", "Force-Push"].includes(label));
   }
 
+  /** Ladeanzeige fuer Aktionen aus Sidebar und Verlauf; Fehler und Refresh bleiben beim Aufrufer. */
+  async function track<T>(label: string, action: () => Promise<T>): Promise<T> {
+    busy = label;
+    try {
+      return await action();
+    } finally {
+      busy = "";
+    }
+  }
+
   const doFetch = () => run("Fetch", () => git.fetch(repo));
   const pull = (rebase = false) => run("Pull", () => git.pull(repo, rebase));
   const push = () => run("Push", () => git.push(repo, false));
@@ -245,7 +257,11 @@
   <div class="bg-chrome border-border flex items-center gap-0.5 border-b px-2 py-1">
     {#if status}
       <span class="mr-2 flex items-center gap-1.5 font-mono text-[11px]" title={status.upstream ?? "Kein Upstream"}>
-        <GitBranchIcon class="text-muted-foreground size-3.5" />
+        {#if busy}
+          <LoaderCircleIcon class="text-primary size-3.5 animate-spin" />
+        {:else}
+          <GitBranchIcon class="text-muted-foreground size-3.5" />
+        {/if}
         <span class="font-semibold">{status.branch ?? `detached ${status.head.slice(0, 7)}`}</span>
         {#if status.ahead}<span class="text-primary">↑{status.ahead}</span>{/if}
         {#if status.behind}<span class="text-amber-400">↓{status.behind}</span>{/if}
@@ -310,7 +326,11 @@
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
     {/if}
-    {#if busy}<span class="text-muted-foreground mr-2 text-[11px]">{busy} läuft …</span>{/if}
+    {#if busy}
+      <span class="text-muted-foreground mr-2 flex items-center gap-1.5 text-[11px]" role="status">
+        <LoaderCircleIcon class="size-3.5 animate-spin" />{busy} läuft …
+      </span>
+    {/if}
   </div>
 
   {#if status && status.state !== "clean"}
@@ -350,6 +370,8 @@
           {repo}
           {status}
           {refreshKey}
+          busy={!!busy}
+          {track}
           onchange={refresh}
           onselectref={selectRef}
           onshowdiff={(title, diff) => (shown = { title, diff })}
@@ -389,7 +411,7 @@
               <ChangesPanel {repo} {status} onchange={refresh} onconflict={(p) => (conflictPath = p)} />
             </div>
             <div class="h-full {tab === 'history' ? '' : 'hidden'}">
-              <HistoryPanel {repo} {jumpTo} {refreshKey} onchange={refresh} />
+              <HistoryPanel {repo} {jumpTo} {refreshKey} busy={!!busy} {track} onchange={refresh} />
             </div>
             {#if seen.releases}
               <div class="h-full {tab === 'releases' ? '' : 'hidden'}">
@@ -419,6 +441,8 @@
     <p class="text-muted-foreground px-4 py-6">Lese Status …</p>
   {/if}
 </div>
+
+<AskDialog />
 
 <Dialog.Root open={shown !== null} onOpenChange={(o) => !o && (shown = null)}>
   <Dialog.Content class="flex h-[80vh] flex-col sm:max-w-4xl">
