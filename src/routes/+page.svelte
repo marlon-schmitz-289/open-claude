@@ -3,6 +3,7 @@
   import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { homeDir } from "@tauri-apps/api/path";
   import { open } from "@tauri-apps/plugin-dialog";
   import { load, type Store } from "@tauri-apps/plugin-store";
@@ -36,6 +37,8 @@
   import TerminalIcon from "@lucide/svelte/icons/terminal";
   import FolderOpenIcon from "@lucide/svelte/icons/folder-open";
   import { fuzzy } from "$lib/fuzzy";
+  import { clampZoom, zoomKey, zoomStep, ZOOM_MAX, ZOOM_MIN } from "$lib/zoom";
+  import ZoomInIcon from "@lucide/svelte/icons/zoom-in";
   import IdleAmongUs from "$lib/components/IdleAmongUs.svelte";
   import Terminal from "$lib/components/Terminal.svelte";
   import GitView from "$lib/components/git/GitView.svelte";
@@ -226,6 +229,32 @@
     return () => off.then((f) => f());
   });
 
+  // Zoom in Prozent ueber den nativen Webview-Zoom: skaliert alle Ansichten, Dialoge und die Vorschau gleich.
+  let zoom = $state(100);
+  function applyZoom(pct: number) {
+    zoom = pct;
+    getCurrentWebview().setZoom(pct / 100).catch(() => {});
+  }
+  function setZoom(dir: number) {
+    applyZoom(zoomStep(zoom, dir));
+    store?.set("zoom", zoom);
+  }
+  onMount(() => {
+    // Touchpad und Pinch schicken viele kleine Ereignisse: hoechstens ein Schritt je 80 ms.
+    let last = 0;
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || (mac && e.metaKey)) || !e.deltaY) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.timeStamp - last < 80) return;
+      last = e.timeStamp;
+      setZoom(-Math.sign(e.deltaY));
+    };
+    // Nicht passiv, sonst wirkt preventDefault nicht; Capture, damit es auch ueber dem Terminal greift.
+    window.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    return () => window.removeEventListener("wheel", onWheel, { capture: true });
+  });
+
   // Neue Version aus GitHub-Releases, beim Start und alle 4 h; Fehler (offline, Dev-Build) still ignorieren.
   let update = $state<Update | null>(null);
   let updating = $state(false);
@@ -263,6 +292,8 @@
 
   onMount(async () => {
     store = await load("settings.json", { autoSave: true });
+    // Vor allem anderen, damit auch der Erststart-Dialog gezoomt ist.
+    applyZoom(clampZoom(await store.get("zoom")));
     const saved = await store.get<string>("root");
     root = saved ?? (await invoke<string>("default_root"));
     pins = (await store.get<string[]>("pins")) ?? [];
@@ -604,6 +635,14 @@
   const noteCtrl = (e: KeyboardEvent | PointerEvent) => {
     withCtrl = e.ctrlKey || e.metaKey;
     if (!(e instanceof KeyboardEvent)) return;
+    // Capture am Fenster: vor xterm und CodeMirror, die Shell bekommt die Taste nicht.
+    const dir = zoomKey(e, mac);
+    if (dir !== null) {
+      e.preventDefault();
+      e.stopPropagation();
+      setZoom(dir);
+      return;
+    }
     if (e.key === "Escape")
       overlayOnEsc = !!document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]');
     // WebView2 wuerde neu laden: Sitzungen verwaisen. Im Terminal gehoert Strg+R/F5 der Shell (xterm verhindert selbst).
@@ -688,7 +727,8 @@
 {#if amongUs.on}<IdleAmongUs rate={amongUs.rate} volume={amongUs.volume} />{/if}
 
 <div
-  class="bg-chrome border-border flex h-9 items-center border-b {mac ? 'pl-20' : 'pl-3.5'}"
+  class="bg-chrome border-border flex h-9 items-center border-b {mac ? '' : 'pl-3.5'}"
+  style:padding-left={mac ? `${8000 / zoom}px` : undefined}
   data-tauri-drag-region
 >
   {#if viewRepo}
@@ -698,7 +738,7 @@
       aria-label="Zurück zur Liste (Strg+Umschalt+W)"
       title="Zurück zur Liste (Strg+Umschalt+W)"><ArrowLeftIcon class="size-3.5" /></button
     >
-    <div class="flex min-w-0 flex-1 items-center gap-2" data-tauri-drag-region>
+    <div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden" data-tauri-drag-region>
       <span class="truncate text-xs font-semibold" data-tauri-drag-region>
         {split(viewRepo.rel)[1]}
       </span>
@@ -808,14 +848,14 @@
     <button
       tabindex="-1"
       onmousedown={(e) => e.preventDefault()}
-      class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 place-items-center outline-none"
+      class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 shrink-0 place-items-center outline-none"
       onclick={() => getCurrentWindow().minimize()}
       aria-label="Minimieren"><MinusIcon class="size-3.5" /></button
     >
     <button
       tabindex="-1"
       onmousedown={(e) => e.preventDefault()}
-      class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 place-items-center outline-none"
+      class="text-muted-foreground hover:bg-secondary hover:text-foreground grid h-9 w-11 shrink-0 place-items-center outline-none"
       onclick={() => getCurrentWindow().toggleMaximize()}
       aria-label={maximized ? "Wiederherstellen" : "Maximieren"}
     >
@@ -832,7 +872,7 @@
     <button
       tabindex="-1"
       onmousedown={(e) => e.preventDefault()}
-      class="text-muted-foreground grid h-9 w-11 place-items-center outline-none hover:bg-[#b4404a] hover:text-white"
+      class="text-muted-foreground grid h-9 w-11 shrink-0 place-items-center outline-none hover:bg-[#b4404a] hover:text-white"
       onclick={() => getCurrentWindow().close()}
       aria-label="Schließen"><XIcon class="size-3.5" /></button
     >
@@ -916,6 +956,32 @@
                 {@render setting("Schließen legt ins Tray", tray, toggleTray, InboxIcon)}
                 <DropdownMenu.Separator class="bg-border my-1 h-px" />
               {/if}
+              <div class="flex items-center gap-2 px-2 py-1.5">
+                <ZoomInIcon class="text-muted-foreground size-3.5" />
+                <span class="flex-1">Zoom</span>
+                <div class="bg-secondary flex items-center rounded p-0.5">
+                  <button
+                    class="text-muted-foreground hover:text-foreground rounded px-1.5 py-0.5 disabled:opacity-40"
+                    disabled={zoom <= ZOOM_MIN}
+                    onclick={() => setZoom(-1)}
+                    aria-label="Verkleinern"
+                    title="Verkleinern ({mac ? '⌘' : 'Strg'} −)">−</button
+                  >
+                  <button
+                    class="hover:text-foreground w-11 rounded py-0.5 text-center text-[10px] tabular-nums"
+                    onclick={() => setZoom(0)}
+                    title="Zurücksetzen ({mac ? '⌘' : 'Strg'} 0)">{zoom} %</button
+                  >
+                  <button
+                    class="text-muted-foreground hover:text-foreground rounded px-1.5 py-0.5 disabled:opacity-40"
+                    disabled={zoom >= ZOOM_MAX}
+                    onclick={() => setZoom(1)}
+                    aria-label="Vergrößern"
+                    title="Vergrößern ({mac ? '⌘' : 'Strg'} +)">+</button
+                  >
+                </div>
+              </div>
+              <DropdownMenu.Separator class="bg-border my-1 h-px" />
               {@render setting("Among-Us-Easteregg", amongUs.on, () => ((amongUs.on = !amongUs.on), saveAmongUs()), GhostIcon)}
               {#if amongUs.on}
                 <div class="flex items-center gap-2 px-2 py-1.5">
@@ -1281,6 +1347,10 @@
         ["Esc", "Suche leeren, sonst schließen (bzw. ins Tray)"],
       ])}
       <div class="grid content-start gap-6">
+        {@render keys("Überall", [
+          [`${mac ? "⌘" : "Strg"} + + / − / 0`, "Zoom größer / kleiner / zurücksetzen"],
+          [`${mac ? "⌘" : "Strg"} + Mausrad`, "Zoom (Fokus und Maus außerhalb der Vorschau)"],
+        ])}
         {@render keys("Terminal, Git und Editor", [
           ["⇧ + Esc / Strg + ⇧ + W", "Zurück zur Liste, Sitzung läuft weiter"],
           ["Alt + E", "Ordner im Explorer öffnen"],
