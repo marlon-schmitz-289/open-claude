@@ -3,6 +3,7 @@
 // Gespeichert (localStorage "editor:<repo>", JSON, try/catch): layout, active, expanded, pin, url, wpf.
 // Ungespeicherte Inhalte ueberleben keinen Neustart der App.
 import { untrack } from "svelte";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { EditorState, StateEffect } from "@codemirror/state";
 import {
   FILES,
@@ -22,8 +23,8 @@ import {
   type Layout,
   type PanelId,
 } from "./dock.ts";
-import { KONFLIKT, fs, isBinaryImage, previewAllow } from "./files.ts";
-import { moved, under, verdict } from "./editor.logic.ts";
+import { KONFLIKT, devStart as startServer, fs, isBinaryImage, previewAllow, ptyClose, ptyWrite } from "./files.ts";
+import { LOCKFILES, ancestors, devScript, moved, packageManager, plain, serverUrl, under, verdict } from "./editor.logic.ts";
 
 /** Platte weicht vom Puffer ab, waehrend lokale Aenderungen offen sind. */
 export type Conflict = "changed" | "deleted";
@@ -60,6 +61,11 @@ export type RepoEditor = {
   url: string;
   /** WPF-Vorschau fuer dieses Projekt erlaubt: XAML laden kann Code ausfuehren, darum erst nach Rueckfrage. */
   wpf: boolean;
+  /**
+   * Dev-Server des Projekts (hoechstens einer). Nie gespeichert: er startet nur auf Klick, nie beim Oeffnen.
+   * url = aus dem Output erkannte Adresse ("" = noch keine), log = roher Output (letzte 64 KB), cmd = fuer die Anzeige.
+   */
+  dev: { state: "idle" | "running" | "exited"; url: string; log: string; cmd: string };
   /** Aufgeklappte Ordner im Baum. */
   expanded: string[];
   /** mtime der beobachteten Ordner ("" = Projektordner + expanded). Aendert sich ein Wert, liest der Baum den Ordner neu. */
@@ -172,6 +178,7 @@ export function editor(repo: string): RepoEditor {
     pin: str(p.pin),
     url: str(p.url) ?? "",
     wpf: p.wpf === true,
+    dev: { state: "idle", url: "", log: "", cmd: "" },
     expanded: Array.isArray(p.expanded) ? p.expanded.filter((d) => typeof d === "string") : [],
     dirs: {},
     error: "",
@@ -234,6 +241,8 @@ export function closeTab(repo: string, panel: PanelId): boolean {
   const s = editor(repo);
   s.layout = closePanel(s.layout, panel);
   persist(s);
+  // Ohne Vorschau gaebe es keinen sichtbaren Stopp-Knopf mehr.
+  if (panel === PREVIEW) void devStop(repo);
   return true;
 }
 
@@ -340,6 +349,7 @@ export function togglePanel(repo: string, panel: "files" | "preview"): void {
     ? closePanel(s.layout, panel)
     : splitAt(s.layout, panel, null, panel === FILES ? "left" : "right");
   persist(s);
+  if (!groupOf(s.layout, PREVIEW)) void devStop(repo);
 }
 
 /** "Layout zuruecksetzen": Standardlayout, offene Dateien bleiben als Tabs in der main-Gruppe. */
@@ -350,6 +360,8 @@ export function resetLayout(repo: string): void {
   if (s.active !== null) layout = activate(layout, filePanel(s.active));
   s.layout = layout;
   persist(s);
+  // Das Standardlayout hat keine Vorschau.
+  void devStop(repo);
 }
 
 /** Ordner im Baum auf-/zuklappen und speichern. */
@@ -462,6 +474,102 @@ export function watch(repo: string): () => void {
   };
 }
 
+export type DevTarget = { dir: string; pm: string; script: string };
+
+/**
+ * Was der Start-Knopf fuer diese Datei ("" = keine offen) starten wuerde: die naechste package.json darueber mit
+ * einem dev-/start-/serve-Script (Monorepo: das Paket der Datei, nicht die Wurzel); der Paketmanager nach dem
+ * naechsten Lockfile ab dort aufwaerts. null = nichts gefunden. Liest nur, startet nichts.
+ */
+export async function devDetect(repo: string, path: string): Promise<DevTarget | null> {
+  const dirs = ancestors(path);
+  const at = (dir: string, file: string) => (dir ? `${dir}/${file}` : file);
+  const has = await fs.stat(repo, dirs.map((d) => at(d, "package.json")));
+  for (const [i, dir] of dirs.entries()) {
+    if (has[i] === null) continue;
+    const pkg = await fs.read(repo, at(dir, "package.json")).then((t) => t.content, () => "");
+    const script = devScript(pkg);
+    if (!script) continue;
+    const up = dirs.slice(i);
+    const locks = await fs.stat(repo, up.flatMap((d) => LOCKFILES.map((f) => at(d, f))));
+    const n = LOCKFILES.length;
+    const j = up.findIndex((_, k) => locks.slice(k * n, k * n + n).some((m) => m !== null));
+    const present = j < 0 ? [] : LOCKFILES.filter((_, k) => locks[j * n + k] !== null);
+    return { dir, pm: packageManager(pkg, present), script };
+  }
+  return null;
+}
+
+/**
+ * Dev-Server je Projekt: PTY-id und Listener, auch nach seinem Ende (bis zum naechsten Start oder devStop), weil
+ * Output noch nach pty-exit ankommen kann. Nicht reaktiv, der sichtbare Zustand steht in s.dev.
+ */
+const servers = new Map<string, { id: string; off: Promise<UnlistenFn>[] }>();
+
+/**
+ * Dev-Server starten. Fuehrt Code aus dem Projekt aus: NUR aus dem Klick auf den Start-Knopf rufen.
+ * Laeuft schon einer, passiert nichts. Fehler beim Start landen in error.
+ */
+export async function devStart(repo: string, t: DevTarget): Promise<void> {
+  const s = editor(repo);
+  if (s.dev.state === "running") return;
+  // Listener eines beendeten Servers abbauen.
+  void devStop(repo);
+  const id = `dev-${crypto.randomUUID()}`;
+  const dec = new TextDecoder();
+  // Nach devStop koennen noch Events unterwegs sein.
+  const mine = () => servers.get(repo)?.id === id;
+  // Adresse aus einer "Local"-Zeile gefunden: steht fest.
+  let fixed = false;
+  s.dev = { state: "running", url: "", log: "", cmd: `${t.pm} run ${t.script}` };
+  // Listener vor dem Start, damit kein frueher Output verloren geht.
+  const off = [
+    listen<number[]>(`pty:${id}`, (e) => {
+      if (!mine()) return;
+      const chunk = dec.decode(new Uint8Array(e.payload), { stream: true });
+      s.dev.log = (s.dev.log + chunk).slice(-65536);
+      // Cursor-Abfrage beantworten wie ein Terminal: ConPTY stellt sie beim Start und haelt sonst den Output zurueck.
+      if (chunk.includes("\x1b[6n")) ptyWrite(id, "\x1b[1;1R").catch(() => {});
+      if (fixed || s.dev.state !== "running") return;
+      // Ganzen Log neu lesen: URL und Escape-Sequenzen koennen ueber zwei Bloecke verteilt ankommen.
+      const text = plain(s.dev.log);
+      const local = serverUrl(text, true);
+      fixed = !!local;
+      // Ohne "Local"-Zeile bleibt die erste Adresse stehen.
+      if (local || !s.dev.url) s.dev.url = local ?? serverUrl(text) ?? "";
+    }),
+    listen(`pty-exit:${id}`, () => {
+      // Listener bleiben: die letzten Zeilen (die Fehlermeldung) kommen evtl. erst nach dem Exit.
+      if (mine()) s.dev = { ...s.dev, state: "exited", url: "" };
+    }),
+  ];
+  servers.set(repo, { id, off });
+  try {
+    await Promise.all(off);
+    // Inzwischen gestoppt: gar nicht erst starten.
+    if (!mine()) return;
+    await startServer(id, repo, t.dir, t.pm, t.script);
+  } catch (e) {
+    if (!mine()) return;
+    void devStop(repo);
+    s.error = String(e);
+  }
+}
+
+/**
+ * Dev-Server des Projekts stoppen (samt Kindprozessen); ohne Server passiert nichts. Der Log bleibt stehen.
+ * Das Promise endet, wenn die Prozesse beendet sind.
+ */
+export function devStop(repo: string): Promise<void> {
+  const v = servers.get(repo);
+  if (!v) return Promise.resolve();
+  servers.delete(repo);
+  for (const p of v.off) p.then((f) => f(), () => {});
+  const s = store.get(repo);
+  if (s) s.dev = { ...s.dev, state: "idle", url: "" };
+  return ptyClose(v.id).catch(() => {});
+}
+
 /** Ungespeicherte Aenderungen in diesem Projekt; ohne repo: in irgendeinem. Reaktiv. */
 export function isDirty(repo?: string): boolean {
   void count;
@@ -477,6 +585,7 @@ export function isDirty(repo?: string): boolean {
 export function drop(repo: string, force = false): boolean {
   if (!store.has(repo)) return true;
   if (!force && isDirty(repo) && !window.confirm("Ungespeicherte Änderungen im Editor verwerfen?")) return false;
+  void devStop(repo);
   for (const key of [...snapshots.keys()]) if (key.startsWith(snapKey(repo, ""))) snapshots.delete(key);
   store.delete(repo);
   previewAllow(repo, false).catch(() => {});

@@ -496,6 +496,7 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_close,
+            pty::dev_start,
             forge::forge_login,
             forge::forge_logout,
             forge::forge_import_cli,

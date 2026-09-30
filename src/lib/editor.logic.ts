@@ -44,3 +44,65 @@ export function devUrl(input: string): string | null {
     return null;
   }
 }
+
+// --- Dev-Server der Vorschau ---
+
+const ANSI = /\x1b(?:\[[0-?]*[ -\/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()*+].|[@-Z\\-_])/g;
+
+/** Terminal-Output ohne Escape-Sequenzen (Farben, Titel, Zeichensatz, Bildschirm loeschen), Zeilenenden als "\n". */
+export const plain = (raw: string) => raw.replace(ANSI, "").replace(/\r\n?/g, "\n");
+
+// Dahinter muss (nach Satzzeichen) Leerraum, Klammer oder Anfuehrungszeichen stehen: eine mitten im Port
+// abgeschnittene Ausgabe zaehlt nicht, "localhost.evil.com" auch nicht.
+const LOOPBACK = /(https?):\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\])(:\d+)?(\/[^\s"'<>)\]]*)?(?=[.,;:]*[\s"'<>)\]])/;
+
+/**
+ * Lokale Adresse im Output (ueber plain()) eines Dev-Servers; null = noch keine. Eine Zeile mit "Local" (Vite,
+ * Vue CLI, Next, Nuxt, Astro, CRA) gewinnt gegen die erste Adresse: davor stehen gern Proxy- oder API-Zeilen.
+ * localOnly: nur solche Zeilen. Nur localhost/Loopback: nichts aus dem Output darf den iframe auf einen fremden
+ * Host lenken. 0.0.0.0 wird zu localhost.
+ */
+export function serverUrl(text: string, localOnly = false): string | null {
+  // Zeilen samt "\n": die letzte, noch unfertige Zeile besteht die Pruefung auf Leerraum dahinter nicht.
+  const local = text.split(/(?<=\n)/).find((l) => /\bLocal\b/.test(l) && LOOPBACK.test(l));
+  const m = LOOPBACK.exec(local ?? (localOnly ? "" : text));
+  if (!m) return null;
+  const host = m[2] === "0.0.0.0" || m[2] === "[::]" ? "localhost" : m[2];
+  return `${m[1]}://${host}${m[3] ?? ""}${m[4]?.replace(/[.,;:]+$/, "") || "/"}`;
+}
+
+/** Script aus package.json, das den Dev-Server startet; null = keins (oder kaputtes JSON). Rust laesst nur diese zu. */
+export function devScript(pkg: string): string | null {
+  try {
+    const s = JSON.parse(pkg)?.scripts ?? {};
+    return ["dev", "start", "serve"].find((n) => typeof s[n] === "string" && s[n].trim()) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const LOCKS = [
+  ["pnpm-lock.yaml", "pnpm"],
+  ["yarn.lock", "yarn"],
+  ["bun.lock", "bun"],
+  ["bun.lockb", "bun"],
+  ["package-lock.json", "npm"],
+] as const;
+export const LOCKFILES: string[] = LOCKS.map(([f]) => f);
+
+/** Paketmanager: Feld "packageManager" der package.json, sonst nach vorhandenem Lockfile, sonst npm. */
+export function packageManager(pkg: string, present: string[]): string {
+  try {
+    const m = /^(npm|pnpm|yarn|bun)@/.exec(JSON.parse(pkg)?.packageManager ?? "");
+    if (m) return m[1];
+  } catch {
+    // Kaputtes JSON: nach Lockfile.
+  }
+  return LOCKS.find(([f]) => present.includes(f))?.[1] ?? "npm";
+}
+
+/** Ordner ueber einer Datei, naechster zuerst, zuletzt "" (Projektordner): "a/b/c.ts" -> ["a/b", "a", ""]. */
+export function ancestors(path: string): string[] {
+  const p = path.split("/").slice(0, -1);
+  return [...p.map((_, i) => p.slice(0, p.length - i).join("/")), ""];
+}

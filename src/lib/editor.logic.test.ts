@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { devUrl, moved, span, under, verdict } from "./editor.logic.ts";
+import { ancestors, devScript, devUrl, moved, packageManager, plain, serverUrl, span, under, verdict } from "./editor.logic.ts";
 
 test("unveraenderte Platte: nichts tun, egal ob lokal geaendert", () => {
   assert.equal(verdict(false, 5, 5), "none");
@@ -55,4 +55,48 @@ test("devUrl: nur http(s), Schema wird ergaenzt", () => {
   assert.equal(devUrl("javascript:alert(1)"), null);
   assert.equal(devUrl("file:///etc/passwd"), null);
   assert.equal(devUrl("http://"), null);
+});
+
+test("serverUrl: erste lokale Adresse aus dem Output, ohne ANSI", () => {
+  // Vite setzt den Port fett, mitten in die URL.
+  const vite =
+    "\r\n  \x1b[32m\x1b[1mVITE\x1b[22m v8.3.0\x1b[39m  ready\r\n\r\n  \x1b[32m➜\x1b[39m  \x1b[1mLocal\x1b[22m:   \x1b[36mhttp://localhost:\x1b[1m5174\x1b[22m/\x1b[39m\r\n";
+  assert.equal(serverUrl(plain(vite)), "http://localhost:5174/");
+  assert.equal(serverUrl(plain("   - Local:        http://localhost:3000\n")), "http://localhost:3000/");
+  assert.equal(serverUrl(plain(" ┃ Local    https://127.0.0.1:4321/app\n")), "https://127.0.0.1:4321/app");
+  assert.equal(serverUrl(plain("listening on http://0.0.0.0:8080\n")), "http://localhost:8080/");
+  assert.equal(serverUrl(plain("http://[::1]:5173/\n")), "http://[::1]:5173/");
+  assert.equal(serverUrl(plain("\x1b[2J\x1b[3J\x1b[H\x1b]0;title\x07ok http://localhost:1/ \n")), "http://localhost:1/");
+  // Mitten im Port abgeschnitten: noch nicht.
+  assert.equal(serverUrl(plain("Local: http://localhost:51")), null);
+  // Fremde Hosts nie, auch nicht als Praefix getarnt.
+  assert.equal(serverUrl(plain("Network: http://192.168.1.5:5173/\n")), null);
+  assert.equal(serverUrl(plain("http://localhost.evil.com/ \n")), null);
+  assert.equal(serverUrl(plain("http://localhost@evil.com/ \n")), null);
+  // Satzzeichen, Klammern und Zeichensatz-Sequenzen hinter der Adresse gehoeren nicht dazu.
+  assert.equal(serverUrl(plain("Loopback: http://localhost:8080/, http://[::1]:8080/\n")), "http://localhost:8080/");
+  assert.equal(serverUrl(plain("Server listening on http://localhost:3000.\n")), "http://localhost:3000/");
+  assert.equal(serverUrl(plain("ready (http://localhost:3000)\n")), "http://localhost:3000/");
+  assert.equal(serverUrl(plain('open "http://localhost:3000/a.b"\n')), "http://localhost:3000/a.b");
+  assert.equal(serverUrl(plain("http://localhost:5173/\x1b(B\x1b[m\n")), "http://localhost:5173/");
+  // Die Zeile mit "Local" gewinnt gegen eine fruehere Proxy-Zeile.
+  const proxy = "[proxy] /api -> http://localhost:8000 \n";
+  assert.equal(serverUrl(proxy + "  Local: http://localhost:5173/\n"), "http://localhost:5173/");
+  assert.equal(serverUrl(proxy), "http://localhost:8000/");
+  assert.equal(serverUrl(proxy, true), null);
+});
+
+test("devScript, packageManager, ancestors", () => {
+  assert.equal(devScript('{"scripts":{"start":"x","dev":"vite"}}'), "dev");
+  assert.equal(devScript('{"scripts":{"start":"react-scripts start"}}'), "start");
+  assert.equal(devScript('{"scripts":{"build":"x","dev":" "}}'), null);
+  assert.equal(devScript("kaputt"), null);
+  assert.equal(devScript("null"), null);
+  assert.equal(packageManager('{"packageManager":"pnpm@9.1.0+sha"}', ["yarn.lock"]), "pnpm");
+  assert.equal(packageManager("{}", ["package-lock.json", "yarn.lock"]), "yarn");
+  assert.equal(packageManager("kaputt", ["bun.lockb"]), "bun");
+  assert.equal(packageManager("{}", []), "npm");
+  assert.deepEqual(ancestors("apps/web/src/App.vue"), ["apps/web/src", "apps/web", "apps", ""]);
+  assert.deepEqual(ancestors("a.ts"), [""]);
+  assert.deepEqual(ancestors(""), [""]);
 });

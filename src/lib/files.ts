@@ -61,6 +61,15 @@ export const previewAllow = (repo: string, on = true) => call<void>("preview_all
 export const xamlRender = (repo: string, path: string, content: string) =>
   call<string>("xaml_render", { repo, path, content });
 
+/**
+ * Dev-Server starten: `<pm> run <script>` in dir ("" = Projektordner) in einem PTY. Rust laesst nur npm/pnpm/yarn/bun
+ * und dev/start/serve zu. Output kommt als Event "pty:<id>" (Bytes), das Ende als "pty-exit:<id>"; ptyClose stoppt.
+ */
+export const devStart = (id: string, repo: string, dir: string, pm: string, script: string) =>
+  call<void>("dev_start", { id, repo, dir, pm, script });
+export const ptyClose = (id: string) => call<void>("pty_close", { id });
+export const ptyWrite = (id: string, data: string) => call<void>("pty_write", { id, data });
+
 /** Ungespeicherte Aenderungen melden: Rust fragt dann vor dem Beenden (Fenster schliessen, Tray "Beenden"). */
 export const editorDirty = (dirty: boolean) => call<void>("editor_dirty", { dirty });
 

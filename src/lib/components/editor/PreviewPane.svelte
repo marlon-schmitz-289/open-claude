@@ -6,11 +6,14 @@
   import { Input } from "$lib/components/ui/input/index.js";
   import PinIcon from "@lucide/svelte/icons/pin";
   import PinOffIcon from "@lucide/svelte/icons/pin-off";
+  import PlayIcon from "@lucide/svelte/icons/play";
   import RotateCwIcon from "@lucide/svelte/icons/rotate-cw";
+  import ScrollTextIcon from "@lucide/svelte/icons/scroll-text";
+  import SquareIcon from "@lucide/svelte/icons/square";
   import { forge } from "$lib/git";
   import { DOTNET_FEHLT, DOTNET_URL, NUR_WINDOWS, previewKind, previewUrl, xamlRender } from "$lib/files";
-  import { allowWpf, editor, setPin, setUrl } from "$lib/editor.svelte";
-  import { devUrl } from "$lib/editor.logic";
+  import { allowWpf, devDetect, devStart, devStop, editor, setPin, setUrl, type DevTarget } from "$lib/editor.svelte";
+  import { devUrl, plain } from "$lib/editor.logic";
 
   let { repo }: { repo: string } = $props();
 
@@ -19,7 +22,42 @@
   const kind = $derived(target ? previewKind(target) : null);
   const f = $derived(target ? s.files[target] : undefined);
   // Gespeicherte URL nochmal pruefen: nur http(s) darf in den iframe.
-  const url = $derived(devUrl(s.url) ?? "");
+  // Eine von Hand eingetragene Adresse gewinnt gegen die erkannte des eigenen Dev-Servers.
+  const url = $derived(devUrl(s.url) || s.dev.url);
+
+  // Dev-Server: was der Start-Knopf starten wuerde. Hier wird nur gelesen; gestartet wird allein im onclick.
+  let dev = $state<DevTarget | null>(null);
+  $effect(() => {
+    const path = target ?? "";
+    let stale = false;
+    devDetect(repo, path).then(
+      (t) => stale || (dev = t),
+      () => stale || (dev = null),
+    );
+    return () => {
+      stale = true;
+    };
+  });
+  const running = $derived(s.dev.state === "running");
+  // Log: von selbst offen, solange keine Adresse erkannt ist (wartet oder beendet); der Knopf uebersteuert bis zum naechsten Start.
+  let logOpen = $state<boolean | null>(null);
+  // Ein Absturz soll nicht still bleiben, auch wenn der Log zugeklappt war.
+  $effect(() => {
+    if (s.dev.state === "exited") logOpen = null;
+  });
+  const showLog = $derived(s.dev.state !== "idle" && (logOpen ?? !s.dev.url));
+  const log = $derived(showLog ? plain(s.dev.log) : "");
+  let pre = $state<HTMLElement>();
+  $effect(() => {
+    void log;
+    if (pre) pre.scrollTop = pre.scrollHeight;
+  });
+  function toggleDev() {
+    if (running) return void devStop(repo);
+    if (!dev) return;
+    logOpen = null;
+    void devStart(repo, dev);
+  }
 
   // Zaehler des Neu-laden-Knopfs: haengt an ?v= bzw. baut den iframe neu auf.
   let n = $state(0);
@@ -84,14 +122,40 @@
   <div class="border-border flex items-center gap-1 border-b px-1.5 py-1">
     <Input
       bind:value={draft}
-      placeholder={target ?? "http://localhost:5173"}
-      title="Adresse eines laufenden Dev-Servers; leer = Datei anzeigen (Enter übernimmt)"
+      placeholder={s.dev.url || (target ?? "http://localhost:5173")}
+      title="Adresse eines laufenden Dev-Servers; leer = Datei bzw. gestarteten Dev-Server anzeigen (Enter übernimmt)"
       aria-label="Adresse der Vorschau"
       aria-invalid={bad}
       spellcheck={false}
       class="h-6! min-w-0 flex-1 font-mono text-[11px]"
       onkeydown={(e) => e.key === "Enter" && go()}
     />
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      class={running ? "text-foreground" : "text-muted-foreground"}
+      disabled={!running && !dev}
+      title={running
+        ? `Dev-Server stoppen (${s.dev.cmd})`
+        : dev
+          ? `Dev-Server starten: ${dev.pm} run ${dev.script} (${dev.dir || "Projektordner"}) – führt Code aus dem Projekt aus`
+          : "Kein dev-, start- oder serve-Script in package.json gefunden"}
+      onclick={toggleDev}
+    >
+      {#if running}<SquareIcon />{:else}<PlayIcon />{/if}
+    </Button>
+    {#if s.dev.state !== "idle"}
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        class={showLog ? "text-foreground" : "text-muted-foreground"}
+        aria-pressed={showLog}
+        title="Ausgabe des Dev-Servers"
+        onclick={() => (logOpen = !showLog)}
+      >
+        <ScrollTextIcon />
+      </Button>
+    {/if}
     <Button
       variant="ghost"
       size="icon-xs"
@@ -110,13 +174,24 @@
   {#if bad}
     <div class="text-destructive border-border border-b px-2 py-1" role="alert">Nur http://- oder https://-Adressen.</div>
   {/if}
+  {#if showLog}
+    <div class="border-border border-b">
+      {#if !running}
+        <div class="text-destructive px-2 pt-1" role="alert">Dev-Server beendet ({s.dev.cmd}).</div>
+      {:else if !s.dev.url}
+        <div class="text-muted-foreground px-2 pt-1">Wartet auf die Adresse des Servers … Erscheint keine, oben eintragen. Rückfragen des Servers lassen sich hier nicht beantworten.</div>
+      {/if}
+      <pre bind:this={pre} class="max-h-40 overflow-auto px-2 py-1 font-mono text-[11px] whitespace-pre-wrap select-text">{log}</pre>
+    </div>
+  {/if}
   <div class="min-h-0 flex-1 overflow-auto">
     {#if url}
       <!-- bg-white: Seiten ohne eigenen Hintergrund rechnen mit Weiss wie im Browser. -->
       <!-- sandbox ohne allow-top-navigation: die Seite darf das App-Fenster nicht ersetzen (dort haette sie alle Befehle der App). -->
+      <!-- allow-modals/-downloads: confirm(), alert() und Downloads der laufenden App sollen wie im Browser gehen. -->
       {#key n}<iframe
           src={url}
-          sandbox="allow-scripts allow-forms allow-same-origin"
+          sandbox="allow-scripts allow-forms allow-same-origin allow-modals allow-downloads"
           title="Vorschau {url}"
           class="size-full border-0 bg-white"
         ></iframe>{/key}

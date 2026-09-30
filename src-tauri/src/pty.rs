@@ -16,6 +16,47 @@ struct Session {
     master: Box<dyn MasterPty + Send>,
     // Das Child selbst gehoert dem Waiter-Thread (wait() blockiert).
     killer: Box<dyn ChildKiller + Send + Sync>,
+    // Nur Dev-Server: pid der Shell, um beim Stoppen den ganzen Prozessbaum zu treffen (npm -> node).
+    tree: Option<u32>,
+}
+
+impl Session {
+    fn kill(&mut self) {
+        // Vor dem Kill des Elternprozesses, sonst findet taskkill die Kinder nicht mehr.
+        #[cfg(windows)]
+        if let Some(pid) = self.tree {
+            let _ = crate::quiet("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).status();
+        }
+        // Gruppe der Shell (nach setsid ist pid auch die Gruppe) und die im Vordergrund des PTY: eine interaktive
+        // Shell gibt dem Kommando eine eigene. Erst SIGHUP, und wer das ignoriert, bekommt nach 1 s SIGKILL.
+        // ponytail: `kill` als Prozess statt libc::kill, spart die direkte Abhaengigkeit; blockiert hoechstens 1 s.
+        #[cfg(unix)]
+        if let Some(pid) = self.tree {
+            let mut groups = vec![pid as i32];
+            groups.extend(self.master.process_group_leader());
+            groups.retain(|g| *g > 1);
+            groups.dedup();
+            let signal = |sig: &str| {
+                let sent = |g: &i32| {
+                    std::process::Command::new("kill")
+                        .args([sig, "--", &format!("-{g}")])
+                        .stderr(std::process::Stdio::null())
+                        .status()
+                        .is_ok_and(|s| s.success())
+                };
+                groups.iter().filter(|g| sent(g)).count()
+            };
+            signal("-HUP");
+            for _ in 0..10 {
+                if signal("-0") == 0 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            signal("-KILL");
+        }
+        let _ = self.killer.kill();
+    }
 }
 
 // ponytail: ein Lock fuer alle Sessions, pro-Session-Locks falls viele Terminals parallel schreiben.
@@ -34,7 +75,7 @@ impl Ptys {
     pub fn close_all(&self) {
         let sessions: Vec<Session> = self.lock().drain().map(|(_, s)| s).collect();
         for mut s in sessions {
-            let _ = s.killer.kill();
+            s.kill();
             // Drop schliesst die Pseudo-Konsole und reisst angehaengte Prozesse mit.
         }
     }
@@ -124,10 +165,81 @@ pub fn pty_open(
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
+    // ocui-sh liegt neben der Exe: dev target/debug, installiert packt tauri build alle Bins
+    // des Pakets mit ein. Fehlt es, greift die Fallback-Shell.
+    let own = std::env::current_exe()
+        .map(|e| e.with_file_name(format!("ocui-sh{}", std::env::consts::EXE_SUFFIX)))
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (program, args) =
+        shell(cfg!(windows), &own, |k| std::env::var(k).ok(), |p| Path::new(p).is_file());
+    spawn(app, &ptys, id, &cwd, &program, args, cols, rows, &[], false)
+}
+
+/// Kommando des Dev-Servers. pm und script kommen aus dem Projekt (package.json), darum nur feste Werte:
+/// kein freier Text erreicht die Shell.
+fn dev_command(
+    windows: bool,
+    pm: &str,
+    script: &str,
+    env: impl Fn(&str) -> Option<String>,
+) -> Result<(String, Vec<String>), String> {
+    if !["npm", "pnpm", "yarn", "bun"].contains(&pm) || !["dev", "start", "serve"].contains(&script) {
+        return Err(format!("Nicht erlaubt: {pm} run {script}"));
+    }
+    if windows {
+        // cmd loest die .cmd-Shims (npm.cmd, pnpm.cmd) auf.
+        let args = ["/d", "/c", pm, "run", script];
+        return Ok(("cmd.exe".into(), args.map(String::from).to_vec()));
+    }
+    // Login-Shell wie das Terminal: PATH samt nvm/fnm. Ohne exec: npm darf auch eine Shell-Funktion sein (lazy nvm).
+    let sh = env("SHELL")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| UNIX_SHELL.into());
+    Ok((sh, vec!["-lic".into(), format!("{pm} run {script}")]))
+}
+
+/// Dev-Server des Projekts (dir = Ordner mit package.json, "" = Projektordner) in einem PTY starten.
+/// Output und Ende kommen wie beim Terminal als pty:<id> / pty-exit:<id>, gestoppt wird mit pty_close.
+/// Fuehrt Code aus dem Projekt aus: das Frontend ruft das nur auf Klick.
+#[tauri::command]
+pub fn dev_start(
+    app: AppHandle,
+    ptys: State<'_, Ptys>,
+    id: String,
+    repo: String,
+    dir: String,
+    pm: String,
+    script: String,
+) -> Result<(), String> {
+    let cwd = if dir.is_empty() { repo.into() } else { crate::files::within(&repo, &dir)? };
+    if !cwd.join("package.json").is_file() {
+        return Err(format!("Keine package.json in {}", cwd.display()));
+    }
+    let (program, args) = dev_command(cfg!(windows), &pm, &script, |k| std::env::var(k).ok())?;
+    // BROWSER=none: Vite, CRA & Co. oeffnen sonst zusaetzlich den Browser.
+    let env = [("BROWSER", "none")];
+    spawn(app, &ptys, id, &cwd.to_string_lossy(), &program, args, 120, 30, &env, true)
+}
+
+/// Programm in einem neuen PTY starten, Output und Ende als Events melden. tree: siehe Session.
+#[allow(clippy::too_many_arguments)]
+fn spawn(
+    app: AppHandle,
+    ptys: &Ptys,
+    id: String,
+    cwd: &str,
+    program: &str,
+    args: Vec<String>,
+    cols: u16,
+    rows: u16,
+    env: &[(&str, &str)],
+    tree: bool,
+) -> Result<(), String> {
     if !valid_id(&id) {
         return Err(format!("Ungueltige Terminal-id: {id}"));
     }
-    if !Path::new(&cwd).is_dir() {
+    if !Path::new(cwd).is_dir() {
         return Err(format!("Ordner nicht gefunden: {cwd}"));
     }
     if ptys.lock().contains_key(&id) {
@@ -138,21 +250,16 @@ pub fn pty_open(
         .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| format!("PTY konnte nicht geoeffnet werden: {e}"))?;
 
-    // ocui-sh liegt neben der Exe: dev target/debug, installiert packt tauri build alle Bins
-    // des Pakets mit ein. Fehlt es, greift die Fallback-Shell.
-    let own = std::env::current_exe()
-        .map(|e| e.with_file_name(format!("ocui-sh{}", std::env::consts::EXE_SUFFIX)))
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let (program, args) =
-        shell(cfg!(windows), &own, |k| std::env::var(k).ok(), |p| Path::new(p).is_file());
-    let (exe, pre) = crate::native(&program);
+    let (exe, pre) = crate::native(program);
     let mut cmd = CommandBuilder::new(exe);
     cmd.args(pre);
     cmd.args(args);
-    cmd.cwd(&cwd);
+    cmd.cwd(cwd);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
 
     // Aus einer Claude-Session gestartet (z. B. tauri dev) erben wir deren Marker;
     // das claude im Terminal haelt sich dann fuer einen Sub-Agent: keine Farben, kein Transcript.
@@ -193,7 +300,13 @@ pub fn pty_open(
     let gen = NEXT_GEN.fetch_add(1, Ordering::Relaxed);
     ptys.lock().insert(
         id.clone(),
-        Session { gen, writer, master: pair.master, killer: child.clone_killer() },
+        Session {
+            gen,
+            writer,
+            master: pair.master,
+            killer: child.clone_killer(),
+            tree: child.process_id().filter(|_| tree),
+        },
     );
 
     let out = app.clone();
@@ -252,14 +365,28 @@ pub fn pty_resize(ptys: State<'_, Ptys>, id: String, cols: u16, rows: u16) -> Re
 #[tauri::command]
 pub fn pty_close(ptys: State<'_, Ptys>, id: String) -> Result<(), String> {
     let Some(mut s) = ptys.lock().remove(&id) else { return Ok(()) };
-    // ponytail: unter Unix nur SIGHUP ohne SIGKILL-Nachschlag, reicht fuer bash/zsh.
-    let _ = s.killer.kill();
+    s.kill();
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{shell, valid_id, UNIX_SHELL};
+    use super::{dev_command, shell, valid_id, UNIX_SHELL};
+
+    #[test]
+    fn dev_kommando_nur_feste_werte() {
+        let env = |k: &str| (k == "SHELL").then(|| "/bin/fish".to_string());
+        let (p, a) = dev_command(false, "pnpm", "dev", env).unwrap();
+        assert_eq!(p, "/bin/fish");
+        assert_eq!(a, ["-lic", "pnpm run dev"]);
+        assert_eq!(dev_command(false, "npm", "start", |_| None).unwrap().0, UNIX_SHELL);
+        let (p, a) = dev_command(true, "yarn", "serve", env).unwrap();
+        assert_eq!(p, "cmd.exe");
+        assert_eq!(a, ["/d", "/c", "yarn", "run", "serve"]);
+        assert!(dev_command(false, "npm; rm -rf ~", "dev", env).is_err());
+        assert!(dev_command(true, "npm", "dev & calc", env).is_err());
+        assert!(dev_command(false, "npm", "build", env).is_err());
+    }
 
     fn run(windows: bool, env: &[(&str, &str)], files: &[&str]) -> (String, Vec<String>) {
         shell(
