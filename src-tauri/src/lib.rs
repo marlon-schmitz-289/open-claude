@@ -169,6 +169,21 @@ pub(crate) fn native(program: &str) -> (&str, Vec<&str>) {
 /// holen — geloescht nimmt das Kind wenigstens die Vorgabe des Systems.
 const HOOK_VARS: [&str; 3] = ["APPDIR", "GDK_BACKEND", "GTK_THEME"];
 
+/// Gemeinsamer Anfang aller Mounts dieses AppImage. Die Runtime mountet nach
+/// `$TMPDIR/.mount_<Name>XXXXXX`, die letzten sechs Zeichen sind Zufall. Startet sich
+/// die App neu (Update, relaunch), erbt die neue Instanz LD_LIBRARY_PATH der alten
+/// und AppRun setzt nur seine eigenen Pfade davor — die des alten Mounts muessen
+/// genauso weg, sonst laedt git weiter die gebuendelte libnghttp2.
+fn mount_prefix(appdir: &str) -> &str {
+    let dir = appdir.trim_end_matches('/');
+    let name = dir.rsplit('/').next().unwrap_or("");
+    if name.starts_with(".mount_") && name.len() > ".mount_".len() + 6 {
+        &dir[..dir.len() - 6]
+    } else {
+        dir
+    }
+}
+
 fn strip_appdir(
     appdir: &str,
     vars: impl Iterator<Item = (String, String)>,
@@ -176,10 +191,11 @@ fn strip_appdir(
     if appdir.is_empty() {
         return Vec::new();
     }
+    let prefix = mount_prefix(appdir);
     let mut out: Vec<(String, Option<String>)> =
         HOOK_VARS.iter().map(|k| (k.to_string(), None)).collect();
     for (key, val) in vars {
-        if HOOK_VARS.contains(&key.as_str()) || !val.contains(appdir) {
+        if HOOK_VARS.contains(&key.as_str()) || !val.contains(prefix) {
             continue;
         }
         // Pfadlisten nur kuerzen statt loeschen: was nicht im AppDir liegt, ist die
@@ -188,7 +204,7 @@ fn strip_appdir(
         // leerer Eintrag heisst fuer den Loader "aktuelles Verzeichnis".
         let kept: Vec<&str> = val
             .split(':')
-            .filter(|p| !p.is_empty() && !p.starts_with(appdir))
+            .filter(|p| !p.is_empty() && !p.starts_with(prefix))
             .collect();
         out.push((key, (!kept.is_empty()).then(|| kept.join(":"))));
     }
@@ -629,6 +645,19 @@ mod tests {
         // als Wert uebrigbleiben, sonst sucht der Loader im Arbeitsverzeichnis.
         let trailing = &[("LD_LIBRARY_PATH", "/tmp/.mount_OpenCl42/usr/lib/:")];
         assert_eq!(wert(trailing, "LD_LIBRARY_PATH"), Some(None));
+    }
+
+    #[test]
+    fn streicht_auch_pfade_eines_frueheren_mounts() {
+        // Nach relaunch: AppRun der neuen Instanz setzt sich vor die Pfade der alten.
+        let env = &[(
+            "LD_LIBRARY_PATH",
+            "/tmp/.mount_OpenCl42/usr/lib/:/tmp/.mount_OpenClxyzw/usr/lib/:/opt/lib:",
+        )];
+        assert_eq!(wert(env, "LD_LIBRARY_PATH"), Some(Some("/opt/lib".into())));
+        // Ein anderes AppImage bleibt unangetastet.
+        let fremd = &[("LD_LIBRARY_PATH", "/tmp/.mount_Krita0abcdef/usr/lib")];
+        assert_eq!(wert(fremd, "LD_LIBRARY_PATH"), None);
     }
 
     #[test]
