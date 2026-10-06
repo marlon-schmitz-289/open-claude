@@ -198,11 +198,18 @@
       .sort((a, b) => (q ? b.score - a.score : a.repo.rel.localeCompare(b.repo.rel)));
   });
 
-  /** Angepinntes zuerst, sonst nach Ordner gruppiert — bei Suche eine Liste nach Relevanz. */
+  /** Angepinntes zuerst, dann Laufendes, sonst nach Ordner gruppiert — bei Suche eine Liste nach Relevanz. */
   const groups = $derived.by(() => {
-    const pinned = hits.filter((h) => pins.includes(h.repo.path));
-    const rest = hits.filter((h) => !pins.includes(h.repo.path));
-    const head = pinned.length ? [{ heading: "Angepinnt", items: pinned }] : [];
+    // Laufende Sessions oben, sonst bleibt die Reihenfolge (sort ist stabil).
+    const pinned = hits
+      .filter((h) => pins.includes(h.repo.path))
+      .sort((a, b) => +running.has(b.repo.path) - +running.has(a.repo.path));
+    const live = hits.filter((h) => !pins.includes(h.repo.path) && running.has(h.repo.path));
+    const rest = hits.filter((h) => !pins.includes(h.repo.path) && !running.has(h.repo.path));
+    const head = [
+      ...(pinned.length ? [{ heading: "Angepinnt", items: pinned }] : []),
+      ...(live.length ? [{ heading: "Aktiv", items: live }] : []),
+    ];
 
     if (query.trim()) return [...head, { heading: "", items: rest }];
 
