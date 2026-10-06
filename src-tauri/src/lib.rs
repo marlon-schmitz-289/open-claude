@@ -586,7 +586,8 @@ pub fn run() {
             preview::xaml_render,
             preview::editor_dirty,
             skills::skills_list,
-            skills::skills_write_local
+            skills::skills_write_local,
+            skills::mods_list
         ])
         .setup(|app| tray(app.handle()).map_err(Into::into))
         // Mit Tray (macOS: immer) versteckt Schliessen nur — raus kommt man dann ueber das Tray-Menue.

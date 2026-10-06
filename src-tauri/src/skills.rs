@@ -248,6 +248,57 @@ pub async fn skills_write_local(
     blocking(move || write_local(Path::new(&path), skill_overrides, enabled_plugins)).await
 }
 
+/// Eigene Mods (Claude-Code-Plugins mit Function-Hooks); das Terminal reicht sie per CLAUDE_CODE_PLUGIN_DIRS an claude.
+pub fn mods_dir() -> PathBuf {
+    home().join(".claude").join("open-claude-mods")
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+pub struct Mod {
+    name: String,
+    description: String,
+    pub path: String,
+}
+
+/// Unterordner von dir mit .claude-plugin/plugin.json; name/description von dort, sonst Ordnername.
+pub fn mods(dir: &Path) -> Vec<Mod> {
+    let mut out: Vec<Mod> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            let text = std::fs::read_to_string(path.join(".claude-plugin").join("plugin.json")).ok()?;
+            let json: Value = serde_json::from_str(&text).unwrap_or_default();
+            let s = |k: &str| json.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()).map(String::from);
+            Some(Mod {
+                name: s("name").unwrap_or_else(|| e.file_name().to_string_lossy().into_owned()),
+                description: s("description").unwrap_or_default(),
+                path: path.to_string_lossy().into_owned(),
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
+}
+
+#[derive(Serialize)]
+pub struct ModsInfo {
+    dir: String,
+    mods: Vec<Mod>,
+}
+
+/// Legt den Ordner an, damit "Ordner oeffnen" immer klappt.
+#[tauri::command]
+pub async fn mods_list() -> Result<ModsInfo, String> {
+    blocking(|| {
+        let dir = mods_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        Ok(ModsInfo { mods: mods(&dir), dir: dir.to_string_lossy().into_owned() })
+    })
+    .await
+}
+
 #[cfg(test)]
 #[path = "skills_scan_tests.rs"]
 mod scan_tests;

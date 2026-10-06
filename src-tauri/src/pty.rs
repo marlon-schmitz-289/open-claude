@@ -173,7 +173,19 @@ pub fn pty_open(
         .unwrap_or_default();
     let (program, args) =
         shell(cfg!(windows), &own, |k| std::env::var(k).ok(), |p| Path::new(p).is_file());
-    spawn(app, &ptys, id, &cwd, &program, args, cols, rows, &[], false)
+    let mods = crate::skills::mods(&crate::skills::mods_dir());
+    let dirs = plugin_dirs(std::env::var("CLAUDE_CODE_PLUGIN_DIRS").ok(), mods.into_iter().map(|m| m.path.into()));
+    let env: Vec<_> = dirs.iter().map(|d| ("CLAUDE_CODE_PLUGIN_DIRS", d.as_str())).collect();
+    spawn(app, &ptys, id, &cwd, &program, args, cols, rows, &env, false)
+}
+
+/// Mod-Ordner hinter einen schon gesetzten Wert haengen; ohne Mods None (Env bleibt wie geerbt).
+fn plugin_dirs(prev: Option<String>, mods: impl Iterator<Item = std::path::PathBuf>) -> Option<String> {
+    let mut mods = mods.peekable();
+    mods.peek()?;
+    let prev = prev.unwrap_or_default();
+    let all = std::env::split_paths(&prev).filter(|p| !p.as_os_str().is_empty()).chain(mods);
+    std::env::join_paths(all).ok().map(|s| s.to_string_lossy().into_owned())
 }
 
 /// Kommando des Dev-Servers. pm und script kommen aus dem Projekt (package.json), darum nur feste Werte:
@@ -371,7 +383,17 @@ pub fn pty_close(ptys: State<'_, Ptys>, id: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{dev_command, shell, valid_id, UNIX_SHELL};
+    use super::{dev_command, plugin_dirs, shell, valid_id, UNIX_SHELL};
+
+    #[test]
+    fn plugin_dirs_haengt_an() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let m = |v: &[&str]| v.iter().map(std::path::PathBuf::from).collect::<Vec<_>>().into_iter();
+        assert_eq!(plugin_dirs(Some("/x".into()), m(&[])), None);
+        assert_eq!(plugin_dirs(None, m(&["/a", "/b"])), Some(format!("/a{sep}/b")));
+        assert_eq!(plugin_dirs(Some(String::new()), m(&["/a"])), Some("/a".into()));
+        assert_eq!(plugin_dirs(Some(format!("/x{sep}/y")), m(&["/a"])), Some(format!("/x{sep}/y{sep}/a")));
+    }
 
     #[test]
     fn dev_kommando_nur_feste_werte() {

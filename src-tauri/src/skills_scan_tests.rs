@@ -237,3 +237,15 @@ fn settings_schichten_lesen() {
     put(&repo.join(".claude/settings.json"), "[]");
     assert_eq!(list(&home, &repo).team, Settings::default());
 }
+
+#[test]
+fn mods_nur_mit_plugin_json() {
+    let d = tmp("mods");
+    put(&d.join("b/.claude-plugin/plugin.json"), r#"{"name":"usage","description":"Zeigt Usage"}"#);
+    put(&d.join("a/.claude-plugin/plugin.json"), "kaputt");
+    put(&d.join("c/readme.md"), "keine Mod");
+    let m = mods(&d);
+    let names: Vec<_> = m.iter().map(|m| (m.name.as_str(), m.description.as_str())).collect();
+    assert_eq!(names, [("a", ""), ("usage", "Zeigt Usage")]);
+    assert!(mods(&d.join("fehlt")).is_empty());
+}

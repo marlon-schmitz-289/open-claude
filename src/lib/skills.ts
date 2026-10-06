@@ -44,10 +44,15 @@ export type LocalPayload = {
   enabledPlugins: Record<string, boolean> | null;
 };
 
+/** Eigene Mods aus ~/.claude/open-claude-mods; das Terminal laedt sie per CLAUDE_CODE_PLUGIN_DIRS. */
+export type Mod = { name: string; description: string; path: string };
+export type ModsInfo = { dir: string; mods: Mod[] };
+
 const call = <T>(cmd: string, args: Record<string, unknown>) => invoke<T>(cmd, args);
 
 export const skills = {
   list: (path: string) => call<SkillsInfo>("skills_list", { path }),
+  mods: () => call<ModsInfo>("mods_list", {}),
   /** Schreibt nur diese beiden Keys in <repo>/.claude/settings.local.json; null entfernt den Key. */
   writeLocal: (path: string, p: LocalPayload) => call<void>("skills_write_local", { path, ...p }),
 };

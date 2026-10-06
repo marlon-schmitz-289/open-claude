@@ -3,9 +3,10 @@
   import { untrack } from "svelte";
   import { Input } from "$lib/components/ui/input/index.js";
   import { fuzzy } from "$lib/fuzzy";
-  import { skills, layers, resolve, adjust, emptyProject, pkey, type SkillsInfo, type SkillStore, type ProjectSkills, type Skill, type Source } from "$lib/skills";
+  import { skills, layers, resolve, adjust, emptyProject, pkey, type SkillsInfo, type ModsInfo, type SkillStore, type ProjectSkills, type Skill, type Source } from "$lib/skills";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
+  import { invoke } from "@tauri-apps/api/core";
 
   let {
     repo,
@@ -15,6 +16,7 @@
   }: { repo: string; kind?: string | null; store: SkillStore; onproject: (ps: ProjectSkills) => void } = $props();
 
   let info = $state<SkillsInfo | null>(null);
+  let mods = $state<ModsInfo | null>(null);
   let loading = $state(true);
   let error = $state("");
   let query = $state("");
@@ -23,7 +25,7 @@
     loading = true;
     error = "";
     try {
-      info = await skills.list(repo);
+      [info, mods] = await Promise.all([skills.list(repo), skills.mods()]);
     } catch (e) {
       error = String(e);
     }
@@ -142,6 +144,27 @@
           {#each g.items as sk (sk.key)}{@render row(sk, !pv.value)}{/each}
         </ul>
       {/each}
+      {#if mods}
+        <div class="bg-chrome border-border flex items-center gap-3 border-y px-3 py-1.5">
+          <span class="flex-1 truncate text-[11px] font-semibold">Mods</span>
+          <button
+            class="text-muted-foreground hover:text-foreground text-[11px]"
+            title={mods.dir}
+            onclick={() => invoke("reveal", { path: mods!.dir }).catch((e) => (error = String(e)))}>Ordner öffnen</button
+          >
+        </div>
+        <p class="text-muted-foreground px-3 py-1.5 text-[11px]">
+          Mods greifen beim nächsten Claude-Start im Terminal.{mods.mods.length ? "" : " Noch keine Mods installiert."}
+        </p>
+        <ul>
+          {#each mods.mods as m (m.path)}
+            <li class="px-3 py-1.5">
+              <div class="truncate font-mono text-[11px] font-semibold">{m.name}</div>
+              {#if m.description}<div class="text-muted-foreground truncate text-[11px]" title={m.description}>{m.description}</div>{/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </div>
   {/if}
 </div>
