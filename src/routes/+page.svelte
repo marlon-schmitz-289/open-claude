@@ -117,7 +117,7 @@
   let amongUs = $state({ on: true, rate: 1, volume: 1 });
   const RATES: [string, number][] = [["Selten", 3], ["Normal", 1], ["Oft", 0.4]];
   let input = $state<HTMLInputElement | null>(null);
-  // ponytail: keine Tabs-UI, eine Session pro Projekt; Tab-Leiste wenn mehrere parallel sichtbar sein sollen.
+  // Eine Session pro Projekt; die Tab-Leiste ueber dem Terminal wechselt zwischen ihnen.
   let sessions = $state<{ id: string; repo: Repo }[]>([]);
   let active = $state<string | null>(null);
   const activeSession = $derived(sessions.find((s) => s.id === active));
@@ -631,7 +631,8 @@
   /** Aus der Liste nehmen; der Terminal-Unmount schliesst die PTY. */
   function closeSession(id: string) {
     sessions = sessions.filter((s) => s.id !== id);
-    if (active === id) back();
+    // Wie bei Tabs ueblich zur letzten verbliebenen Session, erst ohne Session zurueck zur Liste.
+    if (active === id) sessions.length ? (active = sessions.at(-1)!.id) : back();
   }
 
   // Klick/Enter oeffnet Git, mit Strg Claude. onSelect der Liste kennt kein Event,
@@ -1206,6 +1207,30 @@
   </Command.Root>
 
   <!-- Alle Terminals bleiben gemountet, sonst stirbt claude beim Zurueckgehen. -->
+  {#if view === "term" && sessions.length > 1}
+    <div class="bg-chrome border-border flex shrink-0 gap-px overflow-x-auto border-b px-1 text-[11px]" role="tablist">
+      {#each sessions as s (s.id)}
+        <div
+          class="group flex shrink-0 items-center gap-1 rounded-t px-2 py-1 {s.id === active
+            ? 'bg-background text-foreground'
+            : 'text-muted-foreground hover:text-foreground'}"
+        >
+          <button role="tab" aria-selected={s.id === active} onclick={() => launch(s.repo)}>
+            {split(s.repo.rel)[1]}
+          </button>
+          <button
+            class="hover:bg-destructive/20 hover:text-destructive grid size-4 place-items-center rounded opacity-0 group-hover:opacity-100 {s.id ===
+            active
+              ? 'opacity-100'
+              : ''}"
+            onclick={() => endSession(s.id)}
+            title="Sitzung beenden"
+            aria-label="Sitzung beenden"><XIcon class="size-3" /></button
+          >
+        </div>
+      {/each}
+    </div>
+  {/if}
   <div class="min-h-0 flex-1 {view === 'term' ? '' : 'hidden'}">
     {#each sessions as s (s.id)}
       <Terminal
