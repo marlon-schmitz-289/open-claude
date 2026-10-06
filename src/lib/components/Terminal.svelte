@@ -8,6 +8,7 @@
   import { WebglAddon } from "@xterm/addon-webgl";
   import "@xterm/xterm/css/xterm.css";
   import ClaudeLoader from "./ClaudeLoader.svelte";
+  import { evenCell } from "$lib/termcell";
 
   let {
     id,
@@ -27,9 +28,24 @@
   // claude braucht ~2 s bis zur ersten Ausgabe; solange laufen die Clawds.
   let booting = $state(true);
 
+  // Zeilenhoehe und Zeichenabstand fuer den DOM-Renderer; WebGL rundet den Abstand auf ganze Geraetepixel.
+  const base = { lineHeight: 1.2, letterSpacing: 0.3 };
+  let webgl = false;
+
+  // WebGL zeichnet Block- und Quadrantenzeichen in Achteln der Zelle. Bei ungerader Zellgroesse in
+  // Geraetepixeln (haengt an Zoom mal Bildschirmskalierung) liegen die Kanten auf halben Pixeln:
+  // Haarlinien im Logo, etwa ueber den Augen. Darum die Zelle je DPR auf gerade Pixel bringen.
+  function snap() {
+    if (!term || !webgl) return;
+    // Private API wie im FitAddon; die Zeichengroesse gibt xterm nicht oeffentlich heraus.
+    const cs = (term as any)._core?._charSizeService;
+    if (cs?.width) Object.assign(term.options, evenCell(cs.width, cs.height, devicePixelRatio, base.lineHeight));
+  }
+
   function refit() {
     // Versteckt liefert der Container 0x0 und wuerde die PTY auf 0 Spalten setzen.
     if (!term || !visible || !el.clientWidth || !el.clientHeight) return;
+    snap();
     fit.fit();
     const size = `${term.cols}x${term.rows}`;
     if (!sent || size === sent) return;
@@ -84,8 +100,7 @@
       cursorStyle: "bar",
       fontFamily: css.getPropertyValue("--font-mono") || "monospace",
       fontSize: 13,
-      lineHeight: 1.2,
-      letterSpacing: 0.3,
+      ...base,
       fontWeightBold: "600",
       scrollback: 10000,
       smoothScrollDuration: 90,
@@ -123,12 +138,21 @@
     // Trennlinien mit Zacken (Windows). WebGL zeichnet sie selbst, zellfuellend.
     try {
       const gl = new WebglAddon();
-      gl.onContextLoss(() => gl.dispose());
+      gl.onContextLoss(() => {
+        gl.dispose();
+        webgl = false;
+        Object.assign(t.options, base);
+      });
       t.loadAddon(gl);
+      webgl = true;
     } catch {
       // Kein WebGL2: DOM-Renderer bleibt.
     }
+    snap();
     fit.fit();
+    // Anderer Monitor/andere Skalierung bei gleicher Fenstergroesse: kein ResizeObserver, aber neue DPR.
+    // Nach open() angemeldet, also nach xterms eigenem Listener (misst neu); endet mit dem Terminal.
+    (t as any)._core?._coreBrowserService?.onDprChange(refit);
     t.attachCustomKeyEventHandler(onKeyEvent);
     // Trackpad unter macOS: Im Verlauf teilt xterms Scrollable die Deltas und glaettet je nach
     // Heuristik, fuer Maus-Apps/Alt-Screen drosselt xterm Deltas < 50 px auf 30 %. Langsam wischen
