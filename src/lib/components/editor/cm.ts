@@ -3,7 +3,6 @@ import { EditorView } from "codemirror";
 import { Compartment, type Extension } from "@codemirror/state";
 import { HighlightStyle, LanguageDescription, syntaxHighlighting } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
-import { xml } from "@codemirror/lang-xml";
 import { tags as t } from "@lezer/highlight";
 
 const chrome = EditorView.theme(
@@ -66,12 +65,27 @@ export const theme: Extension = [chrome, syntaxHighlighting(highlight)];
 /** Platz fuer die Sprache im EditorState; sie wird nachgeladen und dann per reconfigure eingesetzt. */
 export const lang = new Compartment();
 
-// XML-Dialekte, die language-data nicht am Namen erkennt.
-const XML = /\.(xaml|axaml|csproj|props|targets)$/i;
+// Endungen, die language-data nicht kennt, auf eine verwandte Grammatik umgebogen. Ohne Eintrag bliebe die Datei
+// einfarbiger Text - das betraf vor allem .svelte.
+// ponytail: .svelte/.astro/.razor laufen als HTML (Script/Style-Bloecke stimmen, {#if}-Bloecke bleiben Text);
+// eine echte Svelte-Grammatik braeuchte ein zusaetzliches Paket.
+const ALIAS: [RegExp, string][] = [
+  [/\.(svelte|astro|razor|cshtml)$/i, "a.html"],
+  [/\.(xaml|axaml|csproj|fsproj|vbproj|props|targets|slnx|resx|config|manifest|nuspec|plist|storyboard|uxml)$/i, "a.xml"],
+  [/\.(jsonc|json5|webmanifest|asmdef|asmref)$|^(composer|flake|bun)\.lock$/i, "a.json"],
+  // Nur die Lockfiles, die wirklich TOML sind; yarn.lock und Gemfile.lock bleiben Text.
+  [/^(cargo|poetry|uv)\.lock$|(^|\.)editorconfig$/i, "a.toml"],
+  // Unity
+  [/\.uss$/i, "a.css"],
+  [/\.(meta|unity|prefab|asset)$/i, "a.yaml"],
+];
+const find = (name: string) => LanguageDescription.matchFilename(languages, name);
 
 /** Sprache zum Dateinamen; die Grammatik kommt erst bei Bedarf als eigener Chunk. null = nur Text. */
 export async function language(path: string): Promise<Extension | null> {
-  const name = path.slice(path.lastIndexOf("/") + 1);
-  if (XML.test(name)) return xml();
-  return (await LanguageDescription.matchFilename(languages, name)?.load()) ?? null;
+  const file = path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+  const name = ALIAS.find(([re]) => re.test(file))?.[1] ?? file;
+  // language-data vergleicht Endungen genau; Foo.CS oder README.MD (Windows) sonst ohne Grammatik.
+  const desc = find(name) ?? find(name.replace(/\.[^.]+$/, (e) => e.toLowerCase()));
+  return (await desc?.load()) ?? null;
 }

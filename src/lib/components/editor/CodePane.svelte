@@ -62,7 +62,7 @@
     if (Array.isArray(loaded) && !loaded.length)
       language(path).then(
         (ext) => ext && v.dom.isConnected && v.dispatch({ effects: lang.reconfigure(ext) }),
-        () => {}, // Grammatik nicht ladbar: bleibt reiner Text.
+        (e) => console.error("Grammatik", path, e), // Nicht ladbar: bleibt reiner Text.
       );
     return () => {
       // Geschlossene/umbenannte Dateien hinterlassen nichts; peek statt editor: nach drop() darf nichts neu entstehen.
