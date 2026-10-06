@@ -6,6 +6,7 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import { git, type FileChange, type Status } from "$lib/git";
   import { hunkPatch, linesPatch, type DiffFile, type Hunk } from "$lib/diff";
+  import { pruneSel, rangeSel, toggleSel } from "$lib/selection";
   import DiffView, { type HunkAction } from "./DiffView.svelte";
   import TriangleAlertIcon from "@lucide/svelte/icons/triangle-alert";
 
@@ -40,6 +41,42 @@
     if (!here) sel = there ? { path, staged: !s } : null;
   });
 
+  // Mehrfachauswahl: immer nur in einer der beiden Listen. Konflikte stehen in keiner davon.
+  let pick = $state<{ staged: boolean; paths: string[] }>({ staged: false, paths: [] });
+  let anchor = ""; // Startpunkt fuer Umschalt+Klick
+  const paths = (fs: FileChange[]) => fs.map((f) => f.path);
+
+  // Was aus dem Status verschwindet, faellt aus der Auswahl (sonst waere es beim Wiederauftauchen wieder gewaehlt).
+  $effect(() => {
+    const kept = pruneSel(pick.paths, paths(pick.staged ? staged : unstaged));
+    if (kept.length !== pick.paths.length) pick.paths = kept;
+  });
+
+  // Wirksame Auswahl; ohne eigene Auswahl zaehlt die Datei, deren Diff gerade gezeigt wird.
+  const chosen = $derived.by(() => {
+    const kept = pruneSel(pick.paths, paths(pick.staged ? staged : unstaged));
+    if (kept.length || !sel) return { staged: pick.staged, paths: kept };
+    return { staged: sel.staged, paths: [sel.path] };
+  });
+  const chosenSet = $derived(new Set(chosen.paths));
+  const isChosen = (f: FileChange, isStaged: boolean) => chosen.staged === isStaged && chosenSet.has(f.path);
+  const chosenIn = (files: FileChange[], isStaged: boolean) =>
+    chosen.staged === isStaged ? files.filter((f) => chosenSet.has(f.path)) : [];
+
+  function pickRow(e: MouseEvent, f: FileChange, files: FileChange[], isStaged: boolean) {
+    // WebKit fokussiert Buttons beim Klick nicht; ohne Fokus kaemen Leertaste/Strg+A/Esc nicht an.
+    (e.currentTarget as HTMLElement).focus();
+    const same = chosen.staged === isStaged;
+    let next = [f.path];
+    if (e.shiftKey && same) next = rangeSel(paths(files), anchor, f.path);
+    else if ((e.ctrlKey || e.metaKey) && same) next = toggleSel(chosen.paths, f.path);
+    if (!e.shiftKey || !same) anchor = f.path;
+    pick = { staged: isStaged, paths: next };
+    if (next.includes(f.path)) sel = { path: f.path, staged: isStaged };
+    else if (sel?.path === f.path && sel.staged === isStaged)
+      sel = next.length ? { path: next[next.length - 1], staged: isStaged } : null;
+  }
+
   // Alter Diff darf nicht mit den Aktionen der neuen Seite (staged/unstaged) angewendet werden.
   let shownKey = "";
   $effect(() => {
@@ -70,8 +107,8 @@
     }
   }
 
-  const toggle = (f: FileChange, isStaged: boolean) =>
-    run(() => (isStaged ? git.unstage(repo, [f.path]) : git.stage(repo, [f.path])));
+  const move = (fs: FileChange[], isStaged: boolean) =>
+    run(() => (isStaged ? git.unstage(repo, paths(fs)) : git.stage(repo, paths(fs))));
 
   // Nach Stagen per Leertaste: Fokus auf die Datei, die jetzt an derselben Stelle der Liste steht.
   let refocus: { staged: boolean; index: number } | null = null;
@@ -85,7 +122,12 @@
   });
 
   // Bestaetigung fuer Verwerfen.
-  let confirm = $state<{ title: string; message: string; run: () => Promise<unknown> } | null>(null);
+  let confirm = $state<{
+    title: string;
+    message: string;
+    files?: FileChange[];
+    run: () => Promise<unknown>;
+  } | null>(null);
   function doConfirm() {
     const action = confirm!.run;
     confirm = null;
@@ -131,15 +173,32 @@
         ],
   );
 
-  function discard(f: FileChange) {
-    confirm = {
-      title: "Änderungen verwerfen?",
-      message:
-        f.worktree === "?"
-          ? `${f.path} ist nicht versioniert und wird gelöscht.`
-          : `Alle nicht gestageten Änderungen in ${f.path} gehen verloren.`,
-      run: () => git.discard(repo, [f.path]),
-    };
+  function discard(fs: FileChange[]) {
+    if (fs.length === 0) return;
+    const [f] = fs;
+    const loose = fs.filter((x) => x.worktree === "?").length;
+    const go = () => git.discard(repo, paths(fs));
+    confirm =
+      fs.length === 1
+        ? {
+            title: "Änderungen verwerfen?",
+            message:
+              f.worktree === "?"
+                ? `${f.path} ist nicht versioniert und wird gelöscht.`
+                : `Alle nicht gestageten Änderungen in ${f.path} gehen verloren.`,
+            run: go,
+          }
+        : {
+            title: `Änderungen in ${fs.length} Dateien verwerfen?`,
+            message:
+              `Alle nicht gestageten Änderungen in diesen ${fs.length} Dateien gehen verloren.` +
+              (loose
+                ? ` ${loose === fs.length ? "Alle" : loose} davon ${loose === 1 ? "ist" : "sind"} nicht versioniert (?) und ${loose === 1 ? "wird" : "werden"} gelöscht.`
+                : "") +
+              " Das lässt sich nicht rückgängig machen.",
+            files: fs,
+            run: go,
+          };
   }
 
   function reveal(f: FileChange) {
@@ -206,6 +265,7 @@
 {/snippet}
 
 {#snippet list(title: string, files: FileChange[], isStaged: boolean)}
+  {@const picked = chosenIn(files, isStaged)}
   <div class="flex min-h-0 flex-1 flex-col">
     <div class="bg-chrome border-border flex items-center gap-1 border-b px-2 py-1">
       <span class="flex-1 font-semibold">{title}</span>
@@ -215,35 +275,71 @@
         size="xs"
         class="h-5 text-[11px]"
         disabled={files.length === 0}
-        onclick={() =>
-          run(() =>
-            isStaged
-              ? git.unstage(repo, files.map((f) => f.path))
-              : git.stage(repo, files.map((f) => f.path)),
-          )}
+        onclick={() => move(files, isStaged)}
       >
         {isStaged ? "Alles unstagen" : "Alles stagen"}
       </Button>
     </div>
+    {#if picked.length > 1}
+      <div class="bg-chrome border-border flex flex-wrap items-center gap-1 border-b px-2 py-0.5">
+        <span class="text-muted-foreground flex-1 text-[11px] whitespace-nowrap">{picked.length} ausgewählt</span>
+        <Button
+          variant="ghost"
+          size="xs"
+          class="h-5 text-[11px]"
+          disabled={busy}
+          title={isStaged ? "Ausgewählte unstagen" : "Ausgewählte stagen"}
+          onclick={() => move(picked, isStaged)}
+        >
+          {isStaged ? "Unstagen" : "Stagen"}
+        </Button>
+        {#if !isStaged}
+          <Button
+            variant="ghost"
+            size="xs"
+            class="text-destructive h-5 text-[11px]"
+            disabled={busy}
+            title="Ausgewählte verwerfen …"
+            onclick={() => discard(picked)}
+          >
+            Verwerfen …
+          </Button>
+        {/if}
+      </div>
+    {/if}
     <div class="min-h-0 flex-1 overflow-y-auto">
       {#each files as f (f.path)}
         {@const code = isStaged ? f.index : f.worktree}
+        <!-- Wie im Dateimanager: Menue wirkt auf die ganze Auswahl, wenn die Zeile dazugehoert, sonst nur auf sie. -->
+        {@const multi = isChosen(f, isStaged) && picked.length > 1}
         <ContextMenu.Root>
           <ContextMenu.Trigger>
             <button
-              class="hover:bg-accent flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-[11px] {sel?.path ===
-                f.path && sel.staged === isStaged
+              class="hover:bg-accent flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-[11px] select-none {isChosen(
+                f,
+                isStaged,
+              ) ||
+              (sel?.path === f.path && sel.staged === isStaged)
                 ? 'bg-accent'
                 : ''}"
               title={f.orig ? `${f.orig} → ${f.path}` : f.path}
               data-file-list={isStaged}
-              onclick={() => (sel = { path: f.path, staged: isStaged })}
-              ondblclick={() => toggle(f, isStaged)}
+              onclick={(e) => pickRow(e, f, files, isStaged)}
+              ondblclick={() => move([f], isStaged)}
               onkeydown={(e) => {
                 if (e.key === " ") {
                   e.preventDefault();
                   refocus = { staged: isStaged, index: files.indexOf(f) };
-                  toggle(f, isStaged);
+                  move([f], isStaged);
+                } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+                  e.preventDefault();
+                  pick = { staged: isStaged, paths: paths(files) };
+                  if (sel?.staged !== isStaged) sel = { path: f.path, staged: isStaged };
+                } else if (e.key === "Escape" && picked.length > 1) {
+                  // Nur die Mehrfachauswahl aufheben (Diff bleibt stehen) und die Ansicht nicht verlassen;
+                  // ohne Mehrfachauswahl geht Esc wie bisher ans Fenster (+page.svelte: zurueck).
+                  e.stopPropagation();
+                  pick = { staged: isStaged, paths: [] };
                 }
               }}
             >
@@ -255,9 +351,23 @@
             <ContextMenu.Content
               class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-44 rounded-md p-1 text-xs ring-1"
             >
-              {@render menuItem(isStaged ? "Unstagen" : "Stagen", () => toggle(f, isStaged))}
-              {#if !isStaged}
-                {@render menuItem("Änderungen verwerfen …", () => discard(f), true)}
+              {#if multi}
+                {@render menuItem(
+                  `Ausgewählte ${isStaged ? "unstagen" : "stagen"} (${picked.length})`,
+                  () => move(picked, isStaged),
+                )}
+                {#if !isStaged}
+                  {@render menuItem(
+                    `Ausgewählte verwerfen (${picked.length}) …`,
+                    () => discard(picked),
+                    true,
+                  )}
+                {/if}
+              {:else}
+                {@render menuItem(isStaged ? "Unstagen" : "Stagen", () => move([f], isStaged))}
+                {#if !isStaged}
+                  {@render menuItem("Änderungen verwerfen …", () => discard([f]), true)}
+                {/if}
               {/if}
               {#if onedit && code !== "D"}
                 {@render menuItem("Im Editor öffnen", () => onedit(f.path))}
@@ -354,6 +464,16 @@
       <Dialog.Title>{confirm?.title}</Dialog.Title>
       <Dialog.Description>{confirm?.message}</Dialog.Description>
     </Dialog.Header>
+    {#if confirm?.files}
+      <ul class="border-border max-h-40 overflow-y-auto rounded-md border py-1 font-mono text-[11px]">
+        {#each confirm.files as f (f.path)}
+          <li class="flex gap-1.5 px-2" title={f.path}>
+            <span class="w-3 shrink-0 text-center font-bold {color[f.worktree] ?? ''}">{f.worktree}</span>
+            <span class="min-w-0 flex-1 truncate">{f.path}</span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
     <div class="flex justify-end gap-2">
       <Button variant="ghost" size="sm" onclick={() => (confirm = null)}>Abbrechen</Button>
       <Button variant="destructive" size="sm" onclick={doConfirm}>Verwerfen</Button>
