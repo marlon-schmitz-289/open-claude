@@ -21,6 +21,7 @@ mod skills;
 mod files;
 // Vorschau des Editors: preview-Schema, WPF-Helfer, Rueckfrage vor dem Beenden.
 mod preview;
+mod deps;
 
 #[derive(Serialize)]
 struct Repo {
@@ -508,6 +509,8 @@ pub fn run() {
             reveal,
             trash_repo,
             set_tray,
+            deps::deps_missing,
+            deps::deps_install,
             pty::pty_open,
             pty::pty_write,
             pty::pty_resize,

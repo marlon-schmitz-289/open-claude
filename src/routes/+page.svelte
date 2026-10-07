@@ -284,6 +284,27 @@
     return () => clearInterval(id);
   });
 
+  // Fehlende Voraussetzungen (claude, unter Windows Git): Knopf in der Titelleiste installiert sie.
+  const DEPS: Record<string, string> = { claude: "Claude Code", git: "Git" };
+  let missing = $state<string[]>([]);
+  let installingDeps = $state(false);
+  onMount(async () => {
+    missing = await invoke<string[]>("deps_missing").catch(() => []);
+  });
+  async function installDeps() {
+    installingDeps = true;
+    for (const name of missing) {
+      try {
+        notice = (await invoke<string>("deps_install", { name })) || `${DEPS[name]} installiert.`;
+      } catch (e) {
+        notice = String(e);
+        break;
+      }
+    }
+    missing = await invoke<string[]>("deps_missing").catch(() => missing);
+    installingDeps = false;
+  }
+
   async function installUpdate() {
     // Der Neustart laeuft an der Rueckfrage in Rust vorbei.
     if (isDirty() && !window.confirm("Ungespeicherte Änderungen im Editor verwerfen und neu starten?")) return;
@@ -849,6 +870,18 @@
       onclick={installUpdate}
       title={`Update installieren und neu starten${update.body ? `\n\n${update.body}` : ""}`}
       ><DownloadIcon class="size-3.5" /> {updating ? "Aktualisiere…" : `Update ${update.version}`}</Button
+    >
+  {/if}
+  {#if missing.length}
+    <Button
+      variant="ghost"
+      size="sm"
+      class="mr-1 h-6 gap-1.5 text-[11px] text-amber-500"
+      disabled={installingDeps}
+      onclick={installDeps}
+      title={`Fehlt auf diesem Rechner: ${missing.map((n) => DEPS[n]).join(", ")}. Klick installiert.`}
+      ><DownloadIcon class="size-3.5" />
+      {installingDeps ? "Installiere…" : `${missing.map((n) => DEPS[n]).join(" + ")} installieren`}</Button
     >
   {/if}
   {#if !mac}

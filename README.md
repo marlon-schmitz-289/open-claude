@@ -14,7 +14,7 @@ Tauri v2 (Rust) + SvelteKit + shadcn-svelte.
 Setup aus den [Releases](../../releases) laden und ausführen. Die Anwendung ist nicht signiert,
 Windows fragt daher einmalig nach: *Weitere Informationen → Trotzdem ausführen*.
 
-Voraussetzungen auf dem Rechner:
+Voraussetzungen auf dem Rechner (fehlen `claude` oder Git, bietet die Titelleiste beim Start die Installation an):
 
 - `claude` auf dem PATH — sonst öffnet sich das Terminal ohne startende CLI
 - Git for Windows — für die Git-Ansicht, die Zeit des letzten Commits und für Befehle mit Pipes,
@@ -31,7 +31,8 @@ nicht signiert, macOS blockiert den ersten Start daher: im Finder mit Rechtsklic
 xattr -dr com.apple.quarantine "/Applications/Open Claude.app"
 ```
 
-Voraussetzung: `claude` auf dem PATH, sonst öffnet sich das Terminal ohne startende CLI.
+Voraussetzung: `claude` auf dem PATH, sonst öffnet sich das Terminal ohne startende CLI. Fehlt es, bietet
+die Titelleiste beim Start die Installation an.
 
 ### Linux
 
@@ -39,7 +40,7 @@ AppImage oder `.deb` aus den [Releases](../../releases) laden. Das AppImage brau
 Ausführrechte (`chmod +x`), das `.deb` lässt sich mit `apt install ./open-claude_*.deb`
 einrichten.
 
-Voraussetzungen auf dem Rechner:
+Voraussetzungen auf dem Rechner (fehlt `claude`, bietet die Titelleiste beim Start die Installation an):
 
 - `claude` auf dem PATH — sonst öffnet sich das Terminal ohne startende CLI
 - WebKitGTK (`libwebkit2gtk-4.1-0`) und `libayatana-appindicator3-1` für das Tray-Icon,
