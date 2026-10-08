@@ -25,6 +25,7 @@ mod files;
 mod preview;
 mod deps;
 mod activity;
+mod workflows;
 // Test-Explorer: Testlaeufe ohne PTY, Output zeilenweise ueber einen Channel.
 mod runner;
 
@@ -635,6 +636,9 @@ pub fn run() {
             activity::claude_activity,
             activity::claude_image,
             activity::claude_agent_log,
+            workflows::workflows_list,
+            workflows::workflows_save,
+            workflows::workflows_delete,
             runner::test_run,
             runner::test_cancel
         ])

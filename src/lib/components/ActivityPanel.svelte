@@ -13,6 +13,12 @@
   import { age } from "$lib/utils";
   import ChevronLeftIcon from "@lucide/svelte/icons/chevron-left";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+  import PlayIcon from "@lucide/svelte/icons/play";
+  import PencilIcon from "@lucide/svelte/icons/pencil";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
+  import WorkflowDialog from "$lib/components/WorkflowDialog.svelte";
+  import { ptyWrite } from "$lib/files";
+  import { fromScript, metaOf, type WfFile } from "$lib/workflow.logic";
 
   type Step = { at: number; tool: string; summary: string };
   type Agent = {
@@ -62,6 +68,7 @@
 
   let data = $state<Activity | null>(null);
   let error = $state("");
+  let tplError = $state("");
   let tab = $state<"session" | "wf" | "img">("session");
   // Session-Daten der Mod im Terminal; Countdowns rechnen gegen now.
   let panel = $state<Panel | null>(null);
@@ -75,6 +82,10 @@
   let urls = $state<Record<string, string>>({});
   // Bild-id in der Lightbox (nicht Index: neue Bilder verschieben die Liste)
   let shown = $state<number | null>(null);
+  // Workflow-Vorlagen (global + Projekt); Claude kann neue schreiben, darum mitpollen
+  let templates = $state<WfFile[]>([]);
+  let wfOpen = $state(false);
+  let wfEntry = $state<WfFile | null>(null);
 
   const STATUS: Record<string, [string, string, string]> = {
     running: ["◐", "text-primary animate-pulse", "läuft"],
@@ -103,6 +114,7 @@
       if (c === cwd && i === id) (data = d), (panel = d.panel ?? panel), (now = Date.now()), (error = "");
       // Laufender Agent: Zeitleiste mitziehen; fertiger wird nur einmal geladen.
       if (focus && (!log || focused?.a.state === "running")) loadLog();
+      if (tab === "wf") loadTemplates();
     } catch (e) {
       if (c === cwd && i === id) error = String(e);
     } finally {
@@ -124,9 +136,50 @@
     shown = null;
     focus = null;
     log = null;
+    templates = [];
+    tplError = "";
     busy = false; // alte Anfrage wird per c !== cwd verworfen
     poll();
   });
+
+  async function loadTemplates() {
+    const c = cwd;
+    try {
+      const l = await invoke<WfFile[]>("workflows_list", { cwd: c });
+      if (c === cwd) (templates = l), (tplError = "");
+    } catch (e) {
+      if (c === cwd) tplError = String(e);
+    }
+  }
+  $effect(() => {
+    if (tab === "wf") loadTemplates();
+  });
+
+  const tpls = $derived(
+    templates.map((f) => {
+      const b = fromScript(f.text);
+      const m = b ? null : metaOf(f.text);
+      return { f, builder: !!b, name: b?.name ?? m?.name ?? f.file, description: b?.description ?? m?.description ?? "" };
+    }),
+  );
+  const shadowed = (scope: string, name: string) => scope === "project" && tpls.some((x) => x.f.scope === "user" && x.name === name);
+
+  function editTemplate(f: WfFile | null) {
+    wfEntry = f;
+    wfOpen = true;
+  }
+  async function deleteTemplate(f: WfFile, name: string) {
+    if (!window.confirm(`Vorlage „${name}“ löschen?`)) return;
+    try {
+      await invoke("workflows_delete", { cwd, scope: f.scope, file: f.file });
+      loadTemplates();
+    } catch (e) {
+      tplError = String(e);
+    }
+  }
+  // Ohne Enter: Args dahinter tippen, dann selbst abschicken; startet nie versehentlich einen teuren Lauf
+  const startTemplate = (f: WfFile) =>
+    ptyWrite(id, `Fuehre den Workflow mit dem Workflow-Tool aus, scriptPath: ${JSON.stringify(f.path)}. Args: `).catch((e) => (tplError = String(e)));
 
   const focused = $derived.by(() => {
     const r = data?.runs.find((r) => r.id === focus?.run);
@@ -295,6 +348,46 @@
   {/if}
 
   <div bind:this={scroller} class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-2 text-xs">
+    {#if tab === "wf" && !focus}
+      <!-- Vor der if-Kette: auch ohne laufende Session sichtbar -->
+      <section class="border-border/60 mb-2 rounded-lg border">
+        <div class="flex items-center justify-between px-2 py-1">
+          <span class="text-muted-foreground">Vorlagen</span>
+          <button class="text-muted-foreground hover:text-foreground" onclick={() => editTemplate(null)}>+ Neu</button>
+        </div>
+        {#each tpls as x (x.f.path)}
+          <div class="border-border/60 flex items-center gap-1.5 border-t px-2 py-1">
+            <span class="max-w-32 shrink-0 truncate font-medium" title={x.f.path}>{x.name}</span>
+            <span class="text-muted-foreground shrink-0 text-[10px]">{x.f.scope === "user" ? "Global" : "Projekt"}</span>
+            {#if !x.builder}<span class="bg-secondary shrink-0 rounded px-1 text-[10px]" title="Freies Skript: nur starten und löschen">Skript</span>{/if}
+            {#if shadowed(x.f.scope, x.name)}<span class="text-warning shrink-0 text-[10px]">Projekt überschreibt Global</span>{/if}
+            <span class="text-muted-foreground min-w-0 flex-1 truncate" title={x.description}>{x.description}</span>
+            <button
+              class="hover:text-foreground text-muted-foreground disabled:opacity-40"
+              disabled={!data?.session}
+              title={data?.session ? "In die Claude-Session schreiben (Enter selbst drücken)" : "Keine laufende Claude-Session"}
+              aria-label="Starten"
+              onclick={() => startTemplate(x.f)}><PlayIcon class="size-3.5" /></button
+            >
+            <button
+              class="hover:text-foreground text-muted-foreground disabled:invisible"
+              disabled={!x.builder}
+              aria-label="Bearbeiten"
+              onclick={() => editTemplate(x.f)}><PencilIcon class="size-3.5" /></button
+            >
+            <button
+              class="hover:text-destructive text-muted-foreground disabled:opacity-40"
+              disabled={!/^[A-Za-z0-9_-]+$/.test(x.f.file)}
+              aria-label="Löschen"
+              onclick={() => deleteTemplate(x.f, x.name)}><Trash2Icon class="size-3.5" /></button
+            >
+          </div>
+        {:else}
+          {#if !tplError}<p class="text-muted-foreground border-border/60 border-t px-2 py-1">Noch keine. Oder Claude sagen: „erstell einen Workflow für … und speicher ihn als Vorlage“.</p>{/if}
+        {/each}
+        {#if tplError}<p class="text-destructive border-border/60 border-t px-2 py-1">{tplError}</p>{/if}
+      </section>
+    {/if}
     {#if error}
       <p class="text-destructive p-2">{error}</p>
     {:else if !data}
@@ -530,6 +623,8 @@
   </div>
   {#if sub}<div class="text-muted-foreground truncate">{sub}</div>{/if}
 {/snippet}
+
+<WorkflowDialog bind:open={wfOpen} {cwd} entry={wfEntry} taken={templates} onsaved={loadTemplates} />
 
 <Dialog.Root open={current !== null} onOpenChange={(o) => !o && (shown = null)}>
   <Dialog.Content class="max-h-[90vh] sm:max-w-[min(90vw,1200px)]" {onkeydown}>

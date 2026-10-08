@@ -231,10 +231,11 @@ pub(crate) fn builtin_mod(app: &AppHandle) -> Option<PathBuf> {
         return Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("mods/open-claude"));
     }
     let dir = app.path().app_data_dir().ok()?.join("mods/open-claude");
-    const FILES: [(&str, &str); 7] = [
+    const FILES: [(&str, &str); 8] = [
         (".claude-plugin/plugin.json", include_str!("../mods/open-claude/.claude-plugin/plugin.json")),
         ("hooks/hooks.json", include_str!("../mods/open-claude/hooks/hooks.json")),
         ("skills/smart-tests/SKILL.md", include_str!("../mods/open-claude/skills/smart-tests/SKILL.md")),
+        ("skills/workflow-templates/SKILL.md", include_str!("../mods/open-claude/skills/workflow-templates/SKILL.md")),
         ("hooks/register.tsx", include_str!("../mods/open-claude/hooks/register.tsx")),
         ("types/index.d.ts", include_str!("../mods/open-claude/types/index.d.ts")),
         ("themes/open-claude.json", include_str!("../mods/open-claude/themes/open-claude.json")),
