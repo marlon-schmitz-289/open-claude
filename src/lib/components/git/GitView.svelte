@@ -266,7 +266,7 @@
         {/if}
         <span class="font-semibold">{status.branch ?? `detached ${status.head.slice(0, 7)}`}</span>
         {#if status.ahead}<span class="text-primary">↑{status.ahead}</span>{/if}
-        {#if status.behind}<span class="text-amber-400">↓{status.behind}</span>{/if}
+        {#if status.behind}<span class="text-warning">↓{status.behind}</span>{/if}
       </span>
     {/if}
     {@render tool("Fetch", "Fetch (Strg+Umschalt+F)", doFetch, CloudDownloadIcon)}
@@ -336,7 +336,7 @@
   </div>
 
   {#if status && status.state !== "clean"}
-    <div class="border-border flex items-center gap-2 border-b bg-amber-400/10 px-3 py-1.5 text-amber-300">
+    <div class="border-border flex items-center gap-2 border-b bg-warning/10 px-3 py-1.5 text-warning">
       <TriangleAlertIcon class="size-3.5" />
       <span class="flex-1">
         {STATE_LABEL[status.state]} läuft{conflicts

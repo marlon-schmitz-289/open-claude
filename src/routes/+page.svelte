@@ -17,6 +17,8 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import FolderIcon from "@lucide/svelte/icons/folder";
+  import SunMoonIcon from "@lucide/svelte/icons/sun-moon";
+  import { theme, setMode, type Mode } from "$lib/theme.svelte";
   import RefreshIcon from "@lucide/svelte/icons/refresh-cw";
   import GitBranchIcon from "@lucide/svelte/icons/git-branch";
   import KeyboardIcon from "@lucide/svelte/icons/keyboard";
@@ -1041,6 +1043,20 @@
                     aria-label="Vergrößern"
                     title="Vergrößern ({mac ? '⌘' : 'Strg'} +)">+</button
                   >
+                </div>
+              </div>
+              <div class="flex items-center gap-2 px-2 py-1.5">
+                <SunMoonIcon class="text-muted-foreground size-3.5" />
+                <span class="flex-1">Design</span>
+                <div class="bg-secondary flex rounded p-0.5">
+                  {#each [["System", "system"], ["Hell", "light"], ["Dunkel", "dark"]] as [label, m] (m)}
+                    <button
+                      class="rounded px-1.5 py-0.5 text-[10px] {theme.mode === m
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-muted-foreground hover:text-foreground'}"
+                      onclick={() => setMode(m as Mode)}>{label}</button
+                    >
+                  {/each}
                 </div>
               </div>
               <DropdownMenu.Separator class="bg-border my-1 h-px" />

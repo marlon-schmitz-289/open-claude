@@ -24,9 +24,9 @@
   const PAGE = 30;
   const POLL_MS = 10_000;
   const ICON = {
-    success: [CircleCheckIcon, "text-green-500"],
-    failure: [CircleXIcon, "text-red-500"],
-    running: [LoaderCircleIcon, "animate-spin text-yellow-500"],
+    success: [CircleCheckIcon, "text-success"],
+    failure: [CircleXIcon, "text-destructive"],
+    running: [LoaderCircleIcon, "animate-spin text-warning"],
     queued: [CircleDashedIcon, "text-muted-foreground"],
     cancelled: [CircleSlashIcon, "text-muted-foreground opacity-60"],
     skipped: [CircleMinusIcon, "text-muted-foreground opacity-60"],

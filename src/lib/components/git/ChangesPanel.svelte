@@ -246,11 +246,11 @@
   }
 
   const color: Record<string, string> = {
-    M: "text-amber-400",
-    A: "text-emerald-400",
-    D: "text-red-400",
-    R: "text-sky-400",
-    C: "text-sky-400",
+    M: "text-warning",
+    A: "text-success",
+    D: "text-destructive",
+    R: "text-info",
+    C: "text-info",
     "?": "text-muted-foreground",
   };
 </script>
@@ -431,7 +431,7 @@
             Amend
           </label>
           <span
-            class="flex-1 font-mono text-[10px] {subjectLen > 72 ? 'text-amber-400' : 'text-muted-foreground'}"
+            class="flex-1 font-mono text-[10px] {subjectLen > 72 ? 'text-warning' : 'text-muted-foreground'}"
             title={subjectLen > 72 ? "Betreffzeile länger als 72 Zeichen" : "Länge der Betreffzeile"}
           >
             {subjectLen}/72

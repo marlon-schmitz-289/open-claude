@@ -42,7 +42,11 @@ fn main() {
     }
     let mut sh = Shell::new();
     if !no_claude {
-        sh.run("claude");
+        // Pfad von pty_open (App-Daten, ohne " oder $), siehe theme_settings.
+        match std::env::var("OPEN_CLAUDE_SETTINGS") {
+            Ok(p) if !p.is_empty() => sh.run(&format!("claude --settings \"{p}\"")),
+            _ => sh.run("claude"),
+        };
     }
     if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
         repl(&mut sh);

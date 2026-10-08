@@ -85,13 +85,13 @@
   // Schliessen bleibt frei: Notausgang fuer einen haengenden Testlauf im Editor.
   const busy = $derived(!!testRunning || opening || settingUp);
 
-  const VERDICT_CLASS = { green: "text-green-500", yellow: "text-amber-300", red: "text-red-500" } as const;
+  const VERDICT_CLASS = { green: "text-success", yellow: "text-warning", red: "text-destructive" } as const;
 </script>
 
 {#snippet stat(label: string, ok: boolean)}
   <span class="flex items-center gap-1.5">
     {#if ok}
-      <CircleCheckIcon class="size-3.5 text-green-500" />
+      <CircleCheckIcon class="size-3.5 text-success" />
     {:else}
       <CircleXIcon class="text-muted-foreground size-3.5 opacity-60" />
     {/if}
@@ -168,9 +168,9 @@
               {/if}
               {report.passed}/{report.total} bestanden
             </span>
-            {#if report.failed}<span class="text-red-500">{report.failed} fehlgeschlagen</span>{/if}
-            {#if report.skipped}<span class="text-amber-300">{report.skipped} übersprungen</span>{/if}
-            {#if report.inconclusive}<span class="text-amber-300">{report.inconclusive} unklar</span>{/if}
+            {#if report.failed}<span class="text-destructive">{report.failed} fehlgeschlagen</span>{/if}
+            {#if report.skipped}<span class="text-warning">{report.skipped} übersprungen</span>{/if}
+            {#if report.inconclusive}<span class="text-warning">{report.inconclusive} unklar</span>{/if}
             <span class="text-muted-foreground font-mono">{formatDuration(report.durationSecs)}</span>
             <span class="text-muted-foreground">
               über {report.via === "editor" ? "laufenden Editor" : "Batchmode"}

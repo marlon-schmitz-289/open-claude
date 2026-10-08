@@ -196,7 +196,7 @@
                 <span class="text-muted-foreground block truncate font-mono text-[10px]">{r.tag}</span>
               </span>
               {#if r.draft}<Badge variant="outline" class="shrink-0 text-[10px]">Draft</Badge>{/if}
-              {#if r.prerelease}<Badge variant="outline" class="shrink-0 text-[10px] text-amber-400 border-amber-400/40">Pre-Release</Badge>{/if}
+              {#if r.prerelease}<Badge variant="outline" class="shrink-0 text-[10px] text-warning border-warning/40">Pre-Release</Badge>{/if}
               {#if r.id === latestId}<Badge variant="outline" class="text-primary border-primary/50 shrink-0 text-[10px]">Latest</Badge>{/if}
               <span class="text-muted-foreground w-10 shrink-0 text-right font-mono text-[10px] tabular-nums">
                 {age(r.published_at ?? r.created_at)}

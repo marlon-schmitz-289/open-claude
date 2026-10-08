@@ -103,9 +103,9 @@
             <span class="text-muted-foreground/60 w-10 shrink-0 pr-1 text-right select-none">{line.new ?? ""}</span>
             <span
               class="w-4 shrink-0 text-center select-none {line.kind === 'add'
-                ? 'text-emerald-400'
+                ? 'text-success'
                 : line.kind === 'del'
-                  ? 'text-red-400'
+                  ? 'text-destructive'
                   : ''}">{sign[line.kind]}</span
             >
             <span class="pr-2 whitespace-pre">{line.text}</span>

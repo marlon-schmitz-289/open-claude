@@ -264,7 +264,7 @@
           <ChevronRightIcon class="size-3 shrink-0 transition-transform {expanded.open ? 'rotate-90' : ''}" />
           <GitMergeIcon class="size-3.5 shrink-0" />
           <span class="min-w-0 flex-1 truncate">Nicht in <span class="font-mono">{base}</span></span>
-          <span class="font-mono text-[10px] {open.length ? 'text-amber-400' : 'text-muted-foreground'}"
+          <span class="font-mono text-[10px] {open.length ? 'text-warning' : 'text-muted-foreground'}"
             >{open.length}</span
           >
         </button>
@@ -321,7 +321,7 @@
                   ? 'text-primary font-semibold'
                   : ''}">{b.remote ? b.name.slice(b.name.indexOf("/") + 1) : b.name}</span
               >
-              <span class="shrink-0 font-mono text-[10px] text-amber-400">+{b.unmerged}</span>
+              <span class="shrink-0 font-mono text-[10px] text-warning">+{b.unmerged}</span>
               <span class="text-muted-foreground w-9 shrink-0 text-right font-mono text-[10px]">{age(b.date)}</span>
             </button>
           {/each}

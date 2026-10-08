@@ -12,6 +12,7 @@
   import { parseDiff } from "$lib/diff";
   import DiffView from "$lib/components/git/DiffView.svelte";
   import { ask } from "$lib/ask.svelte";
+  import { theme } from "$lib/theme.svelte";
   import Splitter, { stored } from "$lib/components/Splitter.svelte";
   import SearchIcon from "@lucide/svelte/icons/search";
   import CopyIcon from "@lucide/svelte/icons/copy";
@@ -28,8 +29,10 @@
   } = $props();
 
   const PAGE = 200;
-  // Farben pro Graph-Spur, per Index zyklisch.
-  const PALETTE = ["#5aa9e6", "#e6875a", "#7ec850", "#c85fd6", "#e6c15a", "#5ae6c1", "#e65a7c", "#a9a9e6"];
+  // Farben pro Graph-Spur, per Index zyklisch. Hell: gleiche Hues, oklch L 0.55.
+  const DARK = ["#5aa9e6", "#e6875a", "#7ec850", "#c85fd6", "#e6c15a", "#5ae6c1", "#e65a7c", "#a9a9e6"];
+  const LIGHT = ["#0077bd", "#b64e10", "#478416", "#964bb4", "#916a00", "#008474", "#bf395b", "#6568b6"];
+  const PALETTE = $derived(theme.dark ? DARK : LIGHT);
   // Muss der Zeilenhoehe (h-[26px]) entsprechen, sonst reissen die Linien zwischen den Zeilen ab.
   const ROW_H = 26;
   const LANE_W = 14;
@@ -268,7 +271,7 @@
     class="shrink-0 text-[10px] {b.kind === 'head'
       ? 'text-primary border-primary/50 font-semibold'
       : b.kind === 'tag'
-        ? 'text-amber-400 border-amber-400/40'
+        ? 'text-warning border-warning/40'
         : b.kind === 'remote'
           ? 'text-muted-foreground'
           : ''}"

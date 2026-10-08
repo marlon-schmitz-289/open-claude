@@ -1,0 +1,21 @@
+{
+  "name": "Open Claude Hell",
+  "base": "light",
+  "overrides": {
+    "claude": "#7046cf", "claudeShimmer": "#957ee5",
+    "permission": "#7046cf", "permissionShimmer": "#957ee5",
+    "suggestion": "#7046cf", "planMode": "#0e7381",
+    "autoAccept": "#7046cf", "autoAcceptShimmer": "#957ee5",
+    "promptBorder": "#d4d7de", "promptBorderShimmer": "#7046cf", "bashBorder": "#8d5e00",
+    "text": "#1c1f27", "inverseText": "#faf9fe",
+    "inactive": "#5e636f", "subtle": "#d4d7de",
+    "success": "#137738", "warning": "#8d5e00", "error": "#c12535",
+    "userMessageBackground": "#eef0f4", "userMessageBackgroundHover": "#e6e6f8",
+    "composerSidebarBackground": "#fdfdff", "selectionBg": "#e6e6f8",
+    "rate_limit_fill": "#7046cf", "rate_limit_empty": "#d4d7de",
+    "briefLabelClaude": "#7046cf",
+    "diffAdded": "#def8e2", "diffRemoved": "#ffebeb",
+    "diffAddedDimmed": "#eefbf0", "diffRemovedDimmed": "#fff4f4",
+    "diffAddedWord": "#b6eabf", "diffRemovedWord": "#facecf"
+  }
+}
