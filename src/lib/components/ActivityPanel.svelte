@@ -10,6 +10,7 @@
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import Markdown from "$lib/components/Markdown.svelte";
   import ZoomImage from "$lib/components/ZoomImage.svelte";
+  import { Tabs } from "$lib/components/kit";
   import { age } from "$lib/utils";
   import ChevronLeftIcon from "@lucide/svelte/icons/chevron-left";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
@@ -308,24 +309,21 @@
   }
 </script>
 
-<div class="bg-card flex h-full flex-col overflow-hidden rounded-xl ring-1 ring-foreground/5">
-  <div class="border-border flex items-center gap-1 border-b px-2 text-xs">
-    {#each [["session", "Session"], ["wf", "Workflows"], ["img", "Bilder"]] as [id, label] (id)}
-      <button
-        class="-mb-px border-b-2 px-2 py-1.5 {tab === id
-          ? 'border-primary text-foreground'
-          : 'text-muted-foreground hover:text-foreground border-transparent'}"
-        onclick={() => (tab = id as typeof tab)}
-      >
-        {label}{#if id === "img" && imgs.length}<span class="text-muted-foreground ml-1.5 tabular-nums">{imgs.length}</span>{/if}
-      </button>
-    {/each}
+<div class="bg-card flex h-full flex-col overflow-hidden rounded-xl text-xs ring-1 ring-foreground/5">
+  <Tabs
+    bind:value={tab}
+    tabs={[
+      { id: "session", label: "Session" },
+      { id: "wf", label: "Workflows" },
+      { id: "img", label: "Bilder", count: imgs.length },
+    ]}
+  >
     {#if live}
       <span class="text-muted-foreground ml-auto flex items-center gap-1.5 pr-1 text-[11px]">
         <span class="bg-primary size-1.5 animate-pulse rounded-full"></span>live
       </span>
     {/if}
-  </div>
+  </Tabs>
 
   {#if tab === "wf" && focus}
     <!-- Ausserhalb des Scrollbereichs: sticky lag dort ueber breitem Inhalt. -->

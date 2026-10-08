@@ -8,6 +8,7 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import DiffView from "$lib/components/git/DiffView.svelte";
+  import { Empty } from "$lib/components/kit";
   import { diff, edited, editor, flush, keep, peek, prefs, reload, save, snapKey, snapshots, toggleWrap } from "$lib/editor.svelte";
   import { huge, span } from "$lib/editor.logic";
   import { lang, language, setTestMarks, testGutter, theme, wrap } from "./cm";
@@ -140,7 +141,7 @@
 </script>
 
 {#if !f}
-  <div class="text-muted-foreground grid h-full place-items-center text-xs">Lädt …</div>
+  <Empty>Lädt …</Empty>
 {:else}
   <div class="flex h-full min-h-0 flex-col">
     {#if f.conflict}

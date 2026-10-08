@@ -1,11 +1,11 @@
 <script lang="ts">
   import Notice from "$lib/components/Notice.svelte";
+  import { RefreshButton, SectionHead, Segmented, Switch } from "$lib/components/kit";
   import PluginsPanel from "./PluginsPanel.svelte";
   import { untrack } from "svelte";
   import { Input } from "$lib/components/ui/input/index.js";
   import { fuzzy } from "$lib/fuzzy";
   import { skills, layers, resolve, adjust, emptyProject, pkey, type SkillsInfo, type ModsInfo, type SkillStore, type ProjectSkills, type Skill, type Source } from "$lib/skills";
-  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
   import { invoke } from "@tauri-apps/api/core";
 
@@ -72,28 +72,17 @@
   }
 </script>
 
-{#snippet modes()}
-  <div class="bg-secondary flex shrink-0 rounded p-0.5">
-    {#each [["Skills", "skills"], ["Plugins", "plugins"]] as const as [label, m] (m)}
-      <button
-        class="rounded px-1.5 py-0.5 text-[10px] {mode === m ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
-        aria-pressed={mode === m}
-        disabled={!!pluginsBusy}
-        onclick={() => setMode(m)}>{label}</button
-      >
-    {/each}
-  </div>
-{/snippet}
-
-{#snippet toggle(on: boolean, onclick: () => void, label: string)}
-  <button
-    class="relative h-3.5 w-6 shrink-0 rounded-full transition-colors {on ? 'bg-primary' : 'bg-secondary ring-border ring-1'}"
-    role="switch"
-    aria-checked={on}
-    aria-label={label}
-    {onclick}
-    ><span class="bg-foreground absolute top-0.5 size-2.5 rounded-full transition-all {on ? 'left-3' : 'left-0.5'}"></span></button
-  >
+<!-- Snippet, weil PluginsPanel ihn als lead bekommt -->
+{#snippet modeSwitch()}
+  <Segmented
+    value={mode}
+    options={[
+      ["Skills", "skills"],
+      ["Plugins", "plugins"],
+    ] as const}
+    onchange={setMode}
+    disabled={!!pluginsBusy}
+  />
 {/snippet}
 
 {#snippet origin(source: Source, reset: () => void)}
@@ -120,18 +109,18 @@
       {#if sk.description}<div class="text-muted-foreground truncate text-[11px]" title={sk.description}>{sk.description}</div>{/if}
     </div>
     {@render origin(v.source, () => onproject(adjust(ps, "skill", sk.key)))}
-    {@render toggle(v.value !== "off", () => onproject(adjust(ps, "skill", sk.key, v.value === "off" ? "on" : "off")), sk.key)}
+    <Switch on={v.value !== "off"} label={sk.key} onclick={() => onproject(adjust(ps, "skill", sk.key, v.value === "off" ? "on" : "off"))} />
   </li>
 {/snippet}
 
 {#if mode === "plugins"}
-  <PluginsPanel {repo} lead={modes} bind:busy={pluginsBusy} />
+  <PluginsPanel {repo} lead={modeSwitch} bind:busy={pluginsBusy} />
 {:else}
   <div class="flex h-full min-h-0 flex-col text-xs">
     <Notice bind:text={error} />
 
     <div class="border-border flex flex-wrap items-center gap-2 border-b px-3 py-2">
-      {@render modes()}
+      {@render modeSwitch()}
       <span class="text-muted-foreground">Profil</span>
       <select
         class="bg-secondary border-border rounded border px-1.5 py-0.5 text-xs"
@@ -143,12 +132,7 @@
       </select>
       <span class="flex-1"></span>
       <Input bind:value={query} placeholder="Skill suchen" class="h-7 w-48 text-xs" />
-      <button
-        class="text-muted-foreground hover:text-foreground disabled:opacity-50"
-        title="Neu laden"
-        disabled={loading}
-        onclick={reload}><RefreshCwIcon class="size-3.5 {loading ? 'animate-spin' : ''}" /></button
-      >
+      <RefreshButton {loading} onclick={reload} />
     </div>
 
     {#if loading && !info}
@@ -163,24 +147,22 @@
         </ul>
         {#each plugins as g (g.id)}
           {@const pv = resolve("plugin", g.id, l)}
-          <div class="bg-chrome border-border flex items-center gap-3 border-y px-3 py-1.5">
-            <span class="flex-1 truncate font-mono text-[11px] font-semibold">{g.id}</span>
+          <SectionHead title={g.id} mono>
             {@render origin(pv.source, () => onproject(adjust(ps, "plugin", g.id)))}
-            {@render toggle(pv.value, () => onproject(adjust(ps, "plugin", g.id, !pv.value)), g.id)}
-          </div>
+            <Switch on={pv.value} label={g.id} onclick={() => onproject(adjust(ps, "plugin", g.id, !pv.value))} />
+          </SectionHead>
           <ul>
             {#each g.items as sk (sk.key)}{@render row(sk, !pv.value)}{/each}
           </ul>
         {/each}
         {#if mods}
-          <div class="bg-chrome border-border flex items-center gap-3 border-y px-3 py-1.5">
-            <span class="flex-1 truncate text-[11px] font-semibold">Mods</span>
+          <SectionHead title="Mods">
             <button
               class="text-muted-foreground hover:text-foreground text-[11px]"
               title={mods.dir}
               onclick={() => invoke("reveal", { path: mods!.dir }).catch((e) => (error = String(e)))}>Ordner öffnen</button
             >
-          </div>
+          </SectionHead>
           <p class="text-muted-foreground px-3 py-1.5 text-[11px]">
             Mods greifen beim nächsten Claude-Start im Terminal.{mods.mods.length ? "" : " Noch keine Mods installiert."}
           </p>

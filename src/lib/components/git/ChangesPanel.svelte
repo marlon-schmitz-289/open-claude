@@ -1,8 +1,8 @@
 <script lang="ts">
   import Notice from "$lib/components/Notice.svelte";
+  import { ContextItem, ConfirmDialog, menuContent } from "$lib/components/kit";
   import { ContextMenu } from "bits-ui";
   import { invoke } from "@tauri-apps/api/core";
-  import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { git, type FileChange, type Status } from "$lib/git";
   import { hunkPatch, linesPatch, type DiffFile, type Hunk } from "$lib/diff";
@@ -255,15 +255,6 @@
   };
 </script>
 
-{#snippet menuItem(label: string, onSelect: () => void, destructive = false)}
-  <ContextMenu.Item
-    class="hover:bg-accent flex cursor-pointer items-center rounded px-2 py-1 {destructive ? 'text-destructive' : ''}"
-    {onSelect}
-  >
-    {label}
-  </ContextMenu.Item>
-{/snippet}
-
 {#snippet list(title: string, files: FileChange[], isStaged: boolean)}
   {@const picked = chosenIn(files, isStaged)}
   <div class="flex min-h-0 flex-1 flex-col">
@@ -348,32 +339,30 @@
             </button>
           </ContextMenu.Trigger>
           <ContextMenu.Portal>
-            <ContextMenu.Content
-              class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-44 rounded-md p-1 text-xs ring-1"
-            >
+            <ContextMenu.Content class={menuContent}>
               {#if multi}
-                {@render menuItem(
-                  `Ausgewählte ${isStaged ? "unstagen" : "stagen"} (${picked.length})`,
-                  () => move(picked, isStaged),
-                )}
+                <ContextItem
+                  label={`Ausgewählte ${isStaged ? "unstagen" : "stagen"} (${picked.length})`}
+                  onSelect={() => move(picked, isStaged)}
+                />
                 {#if !isStaged}
-                  {@render menuItem(
-                    `Ausgewählte verwerfen (${picked.length}) …`,
-                    () => discard(picked),
-                    true,
-                  )}
+                  <ContextItem
+                    label={`Ausgewählte verwerfen (${picked.length}) …`}
+                    onSelect={() => discard(picked)}
+                    destructive
+                  />
                 {/if}
               {:else}
-                {@render menuItem(isStaged ? "Unstagen" : "Stagen", () => move([f], isStaged))}
+                <ContextItem label={isStaged ? "Unstagen" : "Stagen"} onSelect={() => move([f], isStaged)} />
                 {#if !isStaged}
-                  {@render menuItem("Änderungen verwerfen …", () => discard([f]), true)}
+                  <ContextItem label="Änderungen verwerfen …" onSelect={() => discard([f])} destructive />
                 {/if}
               {/if}
               {#if onedit && code !== "D"}
-                {@render menuItem("Im Editor öffnen", () => onedit(f.path))}
+                <ContextItem label="Im Editor öffnen" onSelect={() => onedit(f.path)} />
               {/if}
-              {@render menuItem("Im Explorer zeigen", () => reveal(f))}
-              {@render menuItem("Pfad kopieren", () => navigator.clipboard.writeText(f.path))}
+              <ContextItem label="Im Explorer zeigen" onSelect={() => reveal(f)} />
+              <ContextItem label="Pfad kopieren" onSelect={() => navigator.clipboard.writeText(f.path)} />
             </ContextMenu.Content>
           </ContextMenu.Portal>
         </ContextMenu.Root>
@@ -458,25 +447,22 @@
   </div>
 </div>
 
-<Dialog.Root open={confirm !== null} onOpenChange={(o) => !o && (confirm = null)}>
-  <Dialog.Content class="sm:max-w-sm">
-    <Dialog.Header>
-      <Dialog.Title>{confirm?.title}</Dialog.Title>
-      <Dialog.Description>{confirm?.message}</Dialog.Description>
-    </Dialog.Header>
-    {#if confirm?.files}
-      <ul class="border-border max-h-40 overflow-y-auto rounded-md border py-1 font-mono text-[11px]">
-        {#each confirm.files as f (f.path)}
-          <li class="flex gap-1.5 px-2" title={f.path}>
-            <span class="w-3 shrink-0 text-center font-bold {color[f.worktree] ?? ''}">{f.worktree}</span>
-            <span class="min-w-0 flex-1 truncate">{f.path}</span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-    <div class="flex justify-end gap-2">
-      <Button variant="ghost" size="sm" onclick={() => (confirm = null)}>Abbrechen</Button>
-      <Button variant="destructive" size="sm" onclick={doConfirm}>Verwerfen</Button>
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
+<ConfirmDialog
+  open={confirm !== null}
+  title={confirm?.title ?? ""}
+  message={confirm?.message}
+  action="Verwerfen"
+  onconfirm={doConfirm}
+  oncancel={() => (confirm = null)}
+>
+  {#if confirm?.files}
+    <ul class="border-border max-h-40 overflow-y-auto rounded-md border py-1 font-mono text-[11px]">
+      {#each confirm.files as f (f.path)}
+        <li class="flex gap-1.5 px-2" title={f.path}>
+          <span class="w-3 shrink-0 text-center font-bold {color[f.worktree] ?? ''}">{f.worktree}</span>
+          <span class="min-w-0 flex-1 truncate">{f.path}</span>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+</ConfirmDialog>

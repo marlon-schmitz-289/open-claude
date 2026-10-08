@@ -2,9 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { ContextMenu } from "bits-ui";
   import Notice from "$lib/components/Notice.svelte";
-  import * as Dialog from "$lib/components/ui/dialog/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { Input } from "$lib/components/ui/input/index.js";
+  import { ContextItem, PromptDialog, menuContent } from "$lib/components/kit";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import FilePlusIcon from "@lucide/svelte/icons/file-plus";
   import FolderPlusIcon from "@lucide/svelte/icons/folder-plus";
@@ -114,15 +112,6 @@
   }
 </script>
 
-{#snippet menuItem(label: string, onSelect: () => void, destructive = false)}
-  <ContextMenu.Item
-    class="hover:bg-accent flex cursor-pointer items-center rounded px-2 py-1 {destructive ? 'text-destructive' : ''}"
-    {onSelect}
-  >
-    {label}
-  </ContextMenu.Item>
-{/snippet}
-
 <div class="flex h-full flex-col text-xs">
   <div class="border-border flex items-center border-b py-0.5 pr-1 pl-2">
     <span class="text-muted-foreground min-w-0 flex-1 truncate text-[10px]" title={repo}
@@ -165,14 +154,12 @@
           </button>
         </ContextMenu.Trigger>
         <ContextMenu.Portal>
-          <ContextMenu.Content
-            class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-44 rounded-md p-1 text-xs ring-1"
-          >
-            {@render menuItem("Neue Datei", () => create(dir, false))}
-            {@render menuItem("Neuer Ordner", () => create(dir, true))}
-            {@render menuItem("Umbenennen", () => rename(r))}
-            {@render menuItem(mac ? "Im Finder zeigen" : "Im Explorer zeigen", () => reveal(dir))}
-            {@render menuItem("Löschen", () => remove(r), true)}
+          <ContextMenu.Content class={menuContent}>
+            <ContextItem label="Neue Datei" onSelect={() => create(dir, false)} />
+            <ContextItem label="Neuer Ordner" onSelect={() => create(dir, true)} />
+            <ContextItem label="Umbenennen" onSelect={() => rename(r)} />
+            <ContextItem label={mac ? "Im Finder zeigen" : "Im Explorer zeigen"} onSelect={() => reveal(dir)} />
+            <ContextItem label="Löschen" onSelect={() => remove(r)} destructive />
           </ContextMenu.Content>
         </ContextMenu.Portal>
       </ContextMenu.Root>
@@ -180,15 +167,10 @@
   </div>
 </div>
 
-<Dialog.Root open={prompt !== null} onOpenChange={(o) => !o && (prompt = null)}>
-  <Dialog.Content class="sm:max-w-sm">
-    <Dialog.Header>
-      <Dialog.Title>{prompt?.title}</Dialog.Title>
-    </Dialog.Header>
-    <Input bind:value={promptValue} onkeydown={(e) => e.key === "Enter" && doPrompt()} autofocus />
-    <div class="flex justify-end gap-2">
-      <Button variant="ghost" size="sm" onclick={() => (prompt = null)}>Abbrechen</Button>
-      <Button size="sm" onclick={doPrompt}>OK</Button>
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
+<PromptDialog
+  open={prompt !== null}
+  title={prompt?.title ?? ""}
+  bind:value={promptValue}
+  onsubmit={doPrompt}
+  oncancel={() => (prompt = null)}
+/>

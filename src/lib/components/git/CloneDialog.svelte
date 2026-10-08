@@ -1,5 +1,6 @@
 <script lang="ts">
   import { age } from "$lib/utils";
+  import { FolderField } from "$lib/components/kit";
   import { open as pickFolder } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
   import { forge, accountId, type Account, type RemoteRepo, type CloneProgress } from "$lib/git";
@@ -9,13 +10,12 @@
   import { Input } from "$lib/components/ui/input/index.js";
   import { Badge } from "$lib/components/ui/badge/index.js";
   import SearchIcon from "@lucide/svelte/icons/search";
-  import FolderIcon from "@lucide/svelte/icons/folder";
   import StarIcon from "@lucide/svelte/icons/star";
   import LockIcon from "@lucide/svelte/icons/lock";
   import GitForkIcon from "@lucide/svelte/icons/git-fork";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import CheckIcon from "@lucide/svelte/icons/check";
-  import Loader2Icon from "@lucide/svelte/icons/loader-2";
+  import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
 
   let {
     open = $bindable(false),
@@ -309,17 +309,7 @@
     {/if}
 
     {#if mode === "url" || selected}
-      <div class="flex items-center gap-1.5">
-        <Input
-          bind:value={dest}
-          oninput={() => (destTouched = true)}
-          placeholder="Zielordner"
-          class="font-mono text-xs"
-        />
-        <Button variant="outline" size="icon" class="shrink-0" onclick={browseDest} aria-label="Ordner wählen">
-          <FolderIcon class="size-3.5" />
-        </Button>
-      </div>
+      <FolderField bind:value={dest} oninput={() => (destTouched = true)} onbrowse={browseDest} />
     {/if}
 
     {#if progress}
@@ -340,7 +330,7 @@
         disabled={cloning || !dest.trim() || (mode === "url" ? !url.trim() : !selected)}
         onclick={doClone}
       >
-        {#if cloning}<Loader2Icon class="size-3.5 animate-spin" />{/if}
+        {#if cloning}<LoaderCircleIcon class="size-3.5 animate-spin" />{/if}
         Klonen
       </Button>
     </div>

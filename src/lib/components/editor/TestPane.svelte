@@ -6,6 +6,8 @@
   import Notice from "$lib/components/Notice.svelte";
   import Splitter, { stored } from "$lib/components/Splitter.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
+  import { ContextItem, menuContent } from "$lib/components/kit";
+  import { cn } from "$lib/utils";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import CircleCheckIcon from "@lucide/svelte/icons/circle-check";
   import CircleDashedIcon from "@lucide/svelte/icons/circle-dashed";
@@ -94,10 +96,6 @@
   {:else if st === "queued"}<CircleDashedIcon class="text-muted-foreground size-3.5 shrink-0" />
   {:else if st === "skipped"}<CircleSlashIcon class="text-warning size-3.5 shrink-0" />
   {:else}<CircleIcon class="text-muted-foreground size-3.5 shrink-0" />{/if}
-{/snippet}
-
-{#snippet menuItem(label: string, onSelect: () => void)}
-  <ContextMenu.Item class="hover:bg-accent flex cursor-pointer items-center rounded px-2 py-1" {onSelect}>{label}</ContextMenu.Item>
 {/snippet}
 
 {#snippet pre(label: string, text: string)}
@@ -222,9 +220,9 @@
             </div>
           </ContextMenu.Trigger>
           <ContextMenu.Portal>
-            <ContextMenu.Content class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-40 rounded-md p-1 text-xs ring-1">
-              {@render menuItem("Ausführen", () => run(r.id))}
-              {@render menuItem("Zur Definition", () => definition(r.id))}
+            <ContextMenu.Content class={cn(menuContent, "min-w-40")}>
+              <ContextItem label="Ausführen" onSelect={() => run(r.id)} />
+              <ContextItem label="Zur Definition" onSelect={() => definition(r.id)} />
             </ContextMenu.Content>
           </ContextMenu.Portal>
         </ContextMenu.Root>
@@ -239,7 +237,7 @@
         <button
           role="tab"
           aria-selected={t.tab === id}
-          class="border-b-2 px-2 py-0.5 text-[11px] {t.tab === id ? 'border-primary text-foreground' : 'text-muted-foreground border-transparent'}"
+          class="border-b-2 px-2 py-0.5 text-[11px] {t.tab === id ? 'border-primary text-foreground' : 'text-muted-foreground hover:text-foreground border-transparent'}"
           onclick={() => (t.tab = id)}>{label}</button
         >
       {/each}

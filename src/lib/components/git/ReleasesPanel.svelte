@@ -1,5 +1,6 @@
 <script lang="ts">
   import Notice from "$lib/components/Notice.svelte";
+  import { ConfirmDialog, RefreshButton } from "$lib/components/kit";
   import Markdown from "$lib/components/Markdown.svelte";
   import { untrack } from "svelte";
   import { age } from "$lib/utils";
@@ -13,7 +14,6 @@
   import PlusIcon from "@lucide/svelte/icons/plus";
   import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
   import PackageIcon from "@lucide/svelte/icons/package";
-  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
 
   let { repo, refreshKey }: { repo: string; refreshKey: number } = $props();
 
@@ -171,14 +171,7 @@
       <div class="border-border flex shrink-0 flex-col border-r" style="width:{listW}px; max-width:60%">
         <div class="border-border flex items-center gap-2 border-b px-2 py-1.5">
           <span class="text-muted-foreground flex-1 truncate">{host}</span>
-          <button
-            class="text-muted-foreground hover:text-foreground disabled:opacity-50"
-            title="Neu laden"
-            disabled={loading}
-            onclick={() => reload()}
-          >
-            <RefreshCwIcon class="size-3.5 {loading ? 'animate-spin' : ''}" />
-          </button>
+          <RefreshButton {loading} onclick={() => reload()} />
           <Button size="sm" variant="outline" class="h-6 text-[11px]" disabled={busy || !kind} onclick={() => openForm(null)}>
             <PlusIcon class="size-3" />Neues Release
           </Button>
@@ -326,17 +319,11 @@
   </Dialog.Content>
 </Dialog.Root>
 
-<Dialog.Root open={confirmDelete !== null} onOpenChange={(o) => !o && (confirmDelete = null)}>
-  <Dialog.Content class="sm:max-w-sm">
-    <Dialog.Header>
-      <Dialog.Title>Release löschen</Dialog.Title>
-      <Dialog.Description>
-        Release „{confirmDelete?.name || confirmDelete?.tag}“ löschen? Der Git-Tag {confirmDelete?.tag} bleibt erhalten.
-      </Dialog.Description>
-    </Dialog.Header>
-    <div class="flex justify-end gap-2">
-      <Button variant="ghost" size="sm" onclick={() => (confirmDelete = null)}>Abbrechen</Button>
-      <Button variant="destructive" size="sm" onclick={doDelete}>Löschen</Button>
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
+<ConfirmDialog
+  open={confirmDelete !== null}
+  title="Release löschen"
+  message={confirmDelete ? `Release „${confirmDelete.name || confirmDelete.tag}“ löschen? Der Git-Tag ${confirmDelete.tag} bleibt erhalten.` : ""}
+  action="Löschen"
+  onconfirm={doDelete}
+  oncancel={() => (confirmDelete = null)}
+/>

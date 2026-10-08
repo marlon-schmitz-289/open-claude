@@ -6,6 +6,8 @@
   import { diffLines, parseConflicts, render, type Choice, type Mark, type Segment } from "$lib/conflict";
   import { Button } from "$lib/components/ui/button/index.js";
   import { DropdownMenu } from "bits-ui";
+  import { cn } from "$lib/utils";
+  import { menuContent, menuItem } from "$lib/components/kit";
   import ChevronUpIcon from "@lucide/svelte/icons/chevron-up";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
   import ChevronsLeftIcon from "@lucide/svelte/icons/chevrons-left";
@@ -234,11 +236,11 @@
         <DropdownMenu.Content
           align="end"
           sideOffset={4}
-          class="bg-popover text-popover-foreground ring-foreground/10 z-50 max-w-80 min-w-48 rounded-lg p-1 text-xs shadow-lg ring-1"
+          class={cn(menuContent, "max-w-80 min-w-48 rounded-lg shadow-lg")}
         >
           {#each [[sides.ours, conflict?.ours], [sides.theirs, conflict?.theirs]] as [name, text], k (k)}
             <DropdownMenu.Item
-              class="data-highlighted:bg-accent flex cursor-pointer items-center gap-1 rounded px-2 py-1.5 data-disabled:opacity-50"
+              class={cn(menuItem, "gap-1 py-1.5 data-disabled:opacity-50 data-disabled:hover:bg-transparent")}
               disabled={text == null}
               onSelect={() => whole(text ?? null)}
               >wie auf <span class="truncate font-mono">{name}</span></DropdownMenu.Item

@@ -1,10 +1,9 @@
 <script lang="ts">
   import Notice from "$lib/components/Notice.svelte";
-  import { age } from "$lib/utils";
+  import { ContextItem, ConfirmDialog, PromptDialog, menuContent } from "$lib/components/kit";
+  import { age, cn } from "$lib/utils";
   import { tick, untrack } from "svelte";
   import { ContextMenu } from "bits-ui";
-  import * as Dialog from "$lib/components/ui/dialog/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Badge } from "$lib/components/ui/badge/index.js";
   import { git, type Commit, type CommitDetail, type ResetMode } from "$lib/git";
@@ -256,15 +255,6 @@
   }
 </script>
 
-{#snippet menuItem(label: string, onSelect: () => void, destructive = false)}
-  <ContextMenu.Item
-    class="hover:bg-accent flex cursor-pointer items-center rounded px-2 py-1 {destructive ? 'text-destructive' : ''}"
-    {onSelect}
-  >
-    {label}
-  </ContextMenu.Item>
-{/snippet}
-
 {#snippet refBadge(b: { label: string; kind: string })}
   <Badge
     variant="outline"
@@ -325,36 +315,46 @@
       </button>
     </ContextMenu.Trigger>
     <ContextMenu.Portal>
-      <ContextMenu.Content class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-48 rounded-md p-1 text-xs ring-1">
-        {@render menuItem("Branch hier erstellen", () =>
-          askPrompt("Neuer Branch ab " + c.sha.slice(0, 8), "", async (v) => {
-            await git.checkout(repo, v, true, c.sha);
-          }),
-        )}
-        {@render menuItem("Tag erstellen", () =>
-          askPrompt("Tag ab " + c.sha.slice(0, 8), "", async (v) => {
-            await git.tagCreate(repo, v, c.sha, null);
-          }),
-        )}
-        {@render menuItem("Auschecken (detached)", () =>
-          askConfirm("Detached auschecken", `HEAD von ${c.sha.slice(0, 8)} lösen? Änderungen ohne Branch können verloren gehen.`, async () => {
-            await git.checkout(repo, c.sha, false, null);
-          }),
-        )}
-        {@render menuItem("Cherry-Pick", () =>
-          ask("pick", "Cherry-Pick", `${c.sha.slice(0, 8)} auf den aktuellen Branch übernehmen?`, () =>
-            run("Cherry-Pick", () => git.cherryPick(repo, c.sha)),
-          ),
-        )}
-        {@render menuItem("Revert", () =>
-          ask("pick", "Revert", `${c.sha.slice(0, 8)} mit einem neuen Commit rückgängig machen?`, () =>
-            run("Revert", () => git.revert(repo, c.sha)),
-          ),
-        )}
-        {@render menuItem("Reset: soft", () => reset(c.sha, "soft"))}
-        {@render menuItem("Reset: mixed", () => reset(c.sha, "mixed"))}
-        {@render menuItem("Reset: hard", () => reset(c.sha, "hard"), true)}
-        {@render menuItem("SHA kopieren", () => copySha(c.sha))}
+      <ContextMenu.Content class={cn(menuContent, "min-w-48")}>
+        <ContextItem
+          label="Branch hier erstellen"
+          onSelect={() =>
+            askPrompt("Neuer Branch ab " + c.sha.slice(0, 8), "", async (v) => {
+              await git.checkout(repo, v, true, c.sha);
+            })}
+        />
+        <ContextItem
+          label="Tag erstellen"
+          onSelect={() =>
+            askPrompt("Tag ab " + c.sha.slice(0, 8), "", async (v) => {
+              await git.tagCreate(repo, v, c.sha, null);
+            })}
+        />
+        <ContextItem
+          label="Auschecken (detached)"
+          onSelect={() =>
+            askConfirm("Detached auschecken", `HEAD von ${c.sha.slice(0, 8)} lösen? Änderungen ohne Branch können verloren gehen.`, async () => {
+              await git.checkout(repo, c.sha, false, null);
+            })}
+        />
+        <ContextItem
+          label="Cherry-Pick"
+          onSelect={() =>
+            ask("pick", "Cherry-Pick", `${c.sha.slice(0, 8)} auf den aktuellen Branch übernehmen?`, () =>
+              run("Cherry-Pick", () => git.cherryPick(repo, c.sha)),
+            )}
+        />
+        <ContextItem
+          label="Revert"
+          onSelect={() =>
+            ask("pick", "Revert", `${c.sha.slice(0, 8)} mit einem neuen Commit rückgängig machen?`, () =>
+              run("Revert", () => git.revert(repo, c.sha)),
+            )}
+        />
+        <ContextItem label="Reset: soft" onSelect={() => reset(c.sha, "soft")} />
+        <ContextItem label="Reset: mixed" onSelect={() => reset(c.sha, "mixed")} />
+        <ContextItem label="Reset: hard" onSelect={() => reset(c.sha, "hard")} destructive />
+        <ContextItem label="SHA kopieren" onSelect={() => copySha(c.sha)} />
       </ContextMenu.Content>
     </ContextMenu.Portal>
   </ContextMenu.Root>
@@ -457,28 +457,19 @@
   </div>
 </div>
 
-<Dialog.Root open={confirm !== null} onOpenChange={(o) => !o && (confirm = null)}>
-  <Dialog.Content class="sm:max-w-sm">
-    <Dialog.Header>
-      <Dialog.Title>{confirm?.title}</Dialog.Title>
-      <Dialog.Description>{confirm?.message}</Dialog.Description>
-    </Dialog.Header>
-    <div class="flex justify-end gap-2">
-      <Button variant="ghost" size="sm" onclick={() => (confirm = null)}>Abbrechen</Button>
-      <Button variant="destructive" size="sm" onclick={doConfirm}>Bestätigen</Button>
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
+<ConfirmDialog
+  open={confirm !== null}
+  title={confirm?.title ?? ""}
+  message={confirm?.message}
+  action="Bestätigen"
+  onconfirm={doConfirm}
+  oncancel={() => (confirm = null)}
+/>
 
-<Dialog.Root open={prompt !== null} onOpenChange={(o) => !o && (prompt = null)}>
-  <Dialog.Content class="sm:max-w-sm">
-    <Dialog.Header>
-      <Dialog.Title>{prompt?.title}</Dialog.Title>
-    </Dialog.Header>
-    <Input bind:value={promptValue} onkeydown={(e) => e.key === "Enter" && doPrompt()} autofocus />
-    <div class="flex justify-end gap-2">
-      <Button variant="ghost" size="sm" onclick={() => (prompt = null)}>Abbrechen</Button>
-      <Button size="sm" onclick={doPrompt}>OK</Button>
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
+<PromptDialog
+  open={prompt !== null}
+  title={prompt?.title ?? ""}
+  bind:value={promptValue}
+  onsubmit={doPrompt}
+  oncancel={() => (prompt = null)}
+/>

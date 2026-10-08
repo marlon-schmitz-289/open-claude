@@ -1,12 +1,10 @@
 <script lang="ts">
   import Notice from "$lib/components/Notice.svelte";
+  import { ContextItem, ConfirmDialog, PromptDialog, menuContent, menuItem } from "$lib/components/kit";
   import { untrack } from "svelte";
   import { ContextMenu, DropdownMenu } from "bits-ui";
   import SettingsIcon from "@lucide/svelte/icons/settings-2";
   import CheckIcon from "@lucide/svelte/icons/check";
-  import * as Dialog from "$lib/components/ui/dialog/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { Input } from "$lib/components/ui/input/index.js";
   import { Badge } from "$lib/components/ui/badge/index.js";
   import { git, forge, type Branch, type Tag, type Stash, type PullRequest, type Status } from "$lib/git";
   import GitBranchIcon from "@lucide/svelte/icons/git-branch";
@@ -18,7 +16,7 @@
   import ArrowUpIcon from "@lucide/svelte/icons/arrow-up";
   import ArrowDownIcon from "@lucide/svelte/icons/arrow-down";
   import GitMergeIcon from "@lucide/svelte/icons/git-merge";
-  import { age } from "$lib/utils";
+  import { age, cn } from "$lib/utils";
   import { ask } from "$lib/ask.svelte";
 
   let {
@@ -227,18 +225,9 @@
   }
 </script>
 
-{#snippet menuItem(label: string, onSelect: () => void, destructive = false)}
-  <ContextMenu.Item
-    class="hover:bg-accent flex cursor-pointer items-center rounded px-2 py-1 {destructive ? 'text-destructive' : ''}"
-    {onSelect}
-  >
-    {label}
-  </ContextMenu.Item>
-{/snippet}
-
 {#snippet choice(label: string, value: string | null)}
   <DropdownMenu.Item
-    class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1"
+    class={menuItem}
     onSelect={() => setBase(value)}
   >
     <CheckIcon class="size-3 {fixedBase === value ? '' : 'invisible'}" />
@@ -280,7 +269,7 @@
           <DropdownMenu.Portal>
             <DropdownMenu.Content
               align="end"
-              class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-52 rounded-md p-1 text-xs ring-1"
+              class={cn(menuContent, "min-w-52")}
             >
               <p class="text-muted-foreground px-2 py-1 text-[10px]">Production-Branch</p>
               {@render choice("Automatisch erkennen", null)}
@@ -380,37 +369,43 @@
               </button>
             </ContextMenu.Trigger>
             <ContextMenu.Portal>
-              <ContextMenu.Content
-                class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-44 rounded-md p-1 text-xs ring-1"
-              >
-                {@render menuItem("Auschecken", () => checkout(b))}
+              <ContextMenu.Content class={menuContent}>
+                <ContextItem label="Auschecken" onSelect={() => checkout(b)} />
                 {#if !b.current}
-                  {@render menuItem("In aktuellen mergen", () =>
-                    ask("merge", "Mergen", `„${b.name}“ in ${status.branch ?? "HEAD"} mergen?`, () =>
-                      run("Merge", () => git.merge(repo, b.name, false)),
-                    ),
-                  )}
-                  {@render menuItem("Aktuellen darauf rebasen", () =>
-                    ask("rebase", "Rebasen", `${status.branch ?? "HEAD"} auf „${b.name}“ rebasen?`, () =>
-                      run("Rebase", () => git.rebase(repo, b.name)),
-                    ),
-                  )}
+                  <ContextItem
+                    label="In aktuellen mergen"
+                    onSelect={() =>
+                      ask("merge", "Mergen", `„${b.name}“ in ${status.branch ?? "HEAD"} mergen?`, () =>
+                        run("Merge", () => git.merge(repo, b.name, false)),
+                      )}
+                  />
+                  <ContextItem
+                    label="Aktuellen darauf rebasen"
+                    onSelect={() =>
+                      ask("rebase", "Rebasen", `${status.branch ?? "HEAD"} auf „${b.name}“ rebasen?`, () =>
+                        run("Rebase", () => git.rebase(repo, b.name)),
+                      )}
+                  />
                 {/if}
                 {#if b.name !== base}
-                  {@render menuItem("Als Production-Branch festlegen", () => setBase(b.name))}
+                  <ContextItem label="Als Production-Branch festlegen" onSelect={() => setBase(b.name)} />
                 {/if}
-                {@render menuItem("Umbenennen", () =>
-                  askPrompt("Branch umbenennen", b.name, (v) => git.branchRename(repo, b.name, v)),
-                )}
-                {@render menuItem("Neuer Branch ab hier", () =>
-                  askPrompt("Neuer Branch ab " + b.name, "", async (v) => {
-                    await git.checkout(repo, v, true, b.name);
-                  }),
-                )}
+                <ContextItem
+                  label="Umbenennen"
+                  onSelect={() =>
+                    askPrompt("Branch umbenennen", b.name, (v) => git.branchRename(repo, b.name, v))}
+                />
+                <ContextItem
+                  label="Neuer Branch ab hier"
+                  onSelect={() =>
+                    askPrompt("Neuer Branch ab " + b.name, "", async (v) => {
+                      await git.checkout(repo, v, true, b.name);
+                    })}
+                />
                 {#if !b.current}
-                  {@render menuItem(
-                    "Löschen",
-                    () =>
+                  <ContextItem
+                    label="Löschen"
+                    onSelect={() =>
                       askConfirm("Branch löschen", `„${b.name}“ lokal löschen?`, async () => {
                         try {
                           await git.branchDelete(repo, b.name, false, false);
@@ -422,9 +417,9 @@
                             async () => void (await git.branchDelete(repo, b.name, true, false)),
                           );
                         }
-                      }),
-                    true,
-                  )}
+                      })}
+                    destructive
+                  />
                 {/if}
               </ContextMenu.Content>
             </ContextMenu.Portal>
@@ -468,21 +463,19 @@
                 </button>
               </ContextMenu.Trigger>
               <ContextMenu.Portal>
-                <ContextMenu.Content
-                  class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-44 rounded-md p-1 text-xs ring-1"
-                >
-                  {@render menuItem("Auschecken (Tracking-Branch)", () => checkout(b))}
+                <ContextMenu.Content class={menuContent}>
+                  <ContextItem label="Auschecken (Tracking-Branch)" onSelect={() => checkout(b)} />
                   {#if b.name !== base}
-                    {@render menuItem("Als Production-Branch festlegen", () => setBase(b.name))}
+                    <ContextItem label="Als Production-Branch festlegen" onSelect={() => setBase(b.name)} />
                   {/if}
-                  {@render menuItem(
-                    "Löschen (remote)",
-                    () =>
+                  <ContextItem
+                    label="Löschen (remote)"
+                    onSelect={() =>
                       askConfirm("Remote-Branch löschen", `„${b.name}“ auf dem Server löschen?`, async () => {
                         await git.branchDelete(repo, b.name, false, true);
-                      }),
-                    true,
-                  )}
+                      })}
+                    destructive
+                  />
                 </ContextMenu.Content>
               </ContextMenu.Portal>
             </ContextMenu.Root>
@@ -520,14 +513,12 @@
               </button>
             </ContextMenu.Trigger>
             <ContextMenu.Portal>
-              <ContextMenu.Content
-                class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-44 rounded-md p-1 text-xs ring-1"
-              >
-                {@render menuItem(
-                  "Löschen",
-                  () => askConfirm("Tag löschen", `Tag „${t.name}“ löschen?`, () => git.tagDelete(repo, t.name)),
-                  true,
-                )}
+              <ContextMenu.Content class={menuContent}>
+                <ContextItem
+                  label="Löschen"
+                  onSelect={() => askConfirm("Tag löschen", `Tag „${t.name}“ löschen?`, () => git.tagDelete(repo, t.name))}
+                  destructive
+                />
               </ContextMenu.Content>
             </ContextMenu.Portal>
           </ContextMenu.Root>
@@ -565,25 +556,27 @@
               </button>
             </ContextMenu.Trigger>
             <ContextMenu.Portal>
-              <ContextMenu.Content
-                class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-44 rounded-md p-1 text-xs ring-1"
-              >
-                {@render menuItem("Anwenden", () =>
-                  ask("stash", "Stash anwenden", `„${s.message}“ anwenden?`, () =>
-                    run("Stash", () => git.stashApply(repo, s.index, false)),
-                  ),
-                )}
-                {@render menuItem("Pop", () =>
-                  ask("stash", "Stash anwenden", `„${s.message}“ anwenden und aus der Liste entfernen?`, () =>
-                    run("Stash", () => git.stashApply(repo, s.index, true)),
-                  ),
-                )}
-                {@render menuItem("Anzeigen", () => showStash(s))}
-                {@render menuItem(
-                  "Löschen",
-                  () => askConfirm("Stash löschen", `„${s.message}“ verwerfen?`, () => git.stashDrop(repo, s.index)),
-                  true,
-                )}
+              <ContextMenu.Content class={menuContent}>
+                <ContextItem
+                  label="Anwenden"
+                  onSelect={() =>
+                    ask("stash", "Stash anwenden", `„${s.message}“ anwenden?`, () =>
+                      run("Stash", () => git.stashApply(repo, s.index, false)),
+                    )}
+                />
+                <ContextItem
+                  label="Pop"
+                  onSelect={() =>
+                    ask("stash", "Stash anwenden", `„${s.message}“ anwenden und aus der Liste entfernen?`, () =>
+                      run("Stash", () => git.stashApply(repo, s.index, true)),
+                    )}
+                />
+                <ContextItem label="Anzeigen" onSelect={() => showStash(s)} />
+                <ContextItem
+                  label="Löschen"
+                  onSelect={() => askConfirm("Stash löschen", `„${s.message}“ verwerfen?`, () => git.stashDrop(repo, s.index))}
+                  destructive
+                />
               </ContextMenu.Content>
             </ContextMenu.Portal>
           </ContextMenu.Root>
@@ -627,28 +620,19 @@
   {/if}
 </div>
 
-<Dialog.Root open={confirm !== null} onOpenChange={(o) => !o && (confirm = null)}>
-  <Dialog.Content class="sm:max-w-sm">
-    <Dialog.Header>
-      <Dialog.Title>{confirm?.title}</Dialog.Title>
-      <Dialog.Description>{confirm?.message}</Dialog.Description>
-    </Dialog.Header>
-    <div class="flex justify-end gap-2">
-      <Button variant="ghost" size="sm" onclick={() => (confirm = null)}>Abbrechen</Button>
-      <Button variant="destructive" size="sm" onclick={doConfirm}>Löschen</Button>
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
+<ConfirmDialog
+  open={confirm !== null}
+  title={confirm?.title ?? ""}
+  message={confirm?.message}
+  action="Löschen"
+  onconfirm={doConfirm}
+  oncancel={() => (confirm = null)}
+/>
 
-<Dialog.Root open={prompt !== null} onOpenChange={(o) => !o && (prompt = null)}>
-  <Dialog.Content class="sm:max-w-sm">
-    <Dialog.Header>
-      <Dialog.Title>{prompt?.title}</Dialog.Title>
-    </Dialog.Header>
-    <Input bind:value={promptValue} onkeydown={(e) => e.key === "Enter" && doPrompt()} autofocus />
-    <div class="flex justify-end gap-2">
-      <Button variant="ghost" size="sm" onclick={() => (prompt = null)}>Abbrechen</Button>
-      <Button size="sm" onclick={doPrompt}>OK</Button>
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
+<PromptDialog
+  open={prompt !== null}
+  title={prompt?.title ?? ""}
+  bind:value={promptValue}
+  onsubmit={doPrompt}
+  oncancel={() => (prompt = null)}
+/>

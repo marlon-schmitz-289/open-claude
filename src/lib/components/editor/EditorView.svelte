@@ -2,6 +2,7 @@
   // Editor-Ansicht eines Projekts: verdrahtet Dock, Dateibaum und Code-Panels mit dem Store.
   // Haelt selbst keinen Zustand: beim Wechsel zu Terminal/Git wird sie abgebaut, Puffer und Layout liegen in $lib/editor.svelte.
   import Notice from "$lib/components/Notice.svelte";
+  import { Empty } from "$lib/components/kit";
   import { Button } from "$lib/components/ui/button/index.js";
   import SaveIcon from "@lucide/svelte/icons/save";
   import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
@@ -95,9 +96,7 @@
 {/snippet}
 
 {#snippet empty()}
-  <div class="text-muted-foreground grid h-full place-items-center p-4 text-center text-xs">
-    Datei im Baum wählen oder mit Strg+P suchen.
-  </div>
+  <Empty>Datei im Baum wählen oder mit Strg+P suchen.</Empty>
 {/snippet}
 
 {#snippet toggle(id: "files" | "preview" | "tests", label: string, Icon: typeof SaveIcon)}

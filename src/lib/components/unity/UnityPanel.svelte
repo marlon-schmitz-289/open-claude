@@ -1,5 +1,6 @@
 <script lang="ts">
   import Notice from "$lib/components/Notice.svelte";
+  import { RefreshButton } from "$lib/components/kit";
   import { untrack } from "svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import UnityCloseDialog from "./UnityCloseDialog.svelte";
@@ -7,7 +8,6 @@
   import CircleCheckIcon from "@lucide/svelte/icons/circle-check";
   import CircleXIcon from "@lucide/svelte/icons/circle-x";
   import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
-  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import TriangleAlertIcon from "@lucide/svelte/icons/triangle-alert";
 
   let { repo }: { repo: string } = $props();
@@ -125,14 +125,7 @@
           {opening ? "Öffnet …" : "Editor öffnen"}
         </Button>
       {/if}
-      <button
-        class="text-muted-foreground hover:text-foreground disabled:opacity-50"
-        title="Neu laden"
-        disabled={loading}
-        onclick={reload}
-      >
-        <RefreshCwIcon class="size-3.5 {loading ? 'animate-spin' : ''}" />
-      </button>
+      <RefreshButton {loading} onclick={reload} />
     </div>
 
     {#if setupLog}

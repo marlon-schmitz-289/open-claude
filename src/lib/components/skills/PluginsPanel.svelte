@@ -1,10 +1,10 @@
 <script lang="ts">
   import Notice from "$lib/components/Notice.svelte";
+  import { RefreshButton, SectionHead, Segmented, Switch } from "$lib/components/kit";
   import { untrack, type Snippet } from "svelte";
   import { Input } from "$lib/components/ui/input/index.js";
   import { fuzzy } from "$lib/fuzzy";
   import { skills, groupInstalled, pickAvailable, type PluginsInfo, type PluginAction, type InstalledPlugin } from "$lib/skills";
-  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
 
   let { repo, lead, busy = $bindable(null) }: { repo: string; lead?: Snippet; busy?: string | null } = $props();
@@ -102,20 +102,6 @@
   const mpSource = (s: PluginsInfo["marketplaces"][string]["source"]) => s.repo ?? s.url ?? s.path ?? s.source;
 </script>
 
-{#snippet toggle(on: boolean, onclick: () => void, label: string)}
-  <button
-    class="relative h-3.5 w-6 shrink-0 rounded-full transition-colors disabled:opacity-50 {on
-      ? 'bg-primary'
-      : 'bg-secondary ring-border ring-1'}"
-    role="switch"
-    aria-checked={on}
-    aria-label={label}
-    disabled={!!busy}
-    {onclick}
-    ><span class="bg-foreground absolute top-0.5 size-2.5 rounded-full transition-all {on ? 'left-3' : 'left-0.5'}"></span></button
-  >
-{/snippet}
-
 {#snippet action(label: string, id: string, onclick: () => void, title = "")}
   <button
     class="border-border hover:bg-secondary shrink-0 rounded border px-1.5 py-0.5 text-[10px] disabled:opacity-50"
@@ -123,29 +109,6 @@
     disabled={!!busy}
     {onclick}>{busy === id ? "…" : label}</button
   >
-{/snippet}
-
-{#snippet head(label: string, extra?: Snippet)}
-  <div class="bg-chrome border-border flex items-center gap-3 border-y px-3 py-1.5">
-    <span class="flex-1 truncate text-[11px] font-semibold">{label}</span>
-    {@render extra?.()}
-  </div>
-{/snippet}
-
-{#snippet scopes()}
-  <span class="text-muted-foreground text-[10px]">Scope</span>
-  <div class="bg-secondary flex shrink-0 rounded p-0.5">
-    {#each [["User", "user"], ["Projekt", "project"]] as const as [label, v] (v)}
-      <button
-        class="rounded px-1.5 py-0.5 text-[10px] {scopeChoice === v
-          ? 'bg-primary text-primary-foreground'
-          : 'text-muted-foreground hover:text-foreground'}"
-        aria-pressed={scopeChoice === v}
-        disabled={!!busy}
-        onclick={() => (scopeChoice = v)}>{label}</button
-      >
-    {/each}
-  </div>
 {/snippet}
 
 <div class="flex h-full min-h-0 flex-col text-xs">
@@ -162,19 +125,14 @@
       disabled={!!busy || !info}
       onclick={checkUpdates}>{busy === "updates" ? "Prüfe …" : "Updates prüfen"}</button
     >
-    <button
-      class="text-muted-foreground hover:text-foreground disabled:opacity-50"
-      title="Neu laden"
-      disabled={loading || !!busy}
-      onclick={reload}><RefreshCwIcon class="size-3.5 {loading || busy === 'updates' ? 'animate-spin' : ''}" /></button
-    >
+    <RefreshButton loading={loading || busy === "updates"} disabled={loading || !!busy} onclick={reload} />
   </div>
 
   {#if loading && !info}
     <p class="text-muted-foreground px-3 py-4">Lese Plugins …</p>
   {:else if info}
     <div class="min-h-0 flex-1 overflow-y-auto">
-      {@render head(`Installiert (${groups.length})`)}
+      <SectionHead title={`Installiert (${groups.length})`} />
       {#if !groups.length}
         <p class="text-muted-foreground px-3 py-2">{q ? `Kein Plugin passt zu „${q}“.` : "Keine Plugins installiert."}</p>
       {/if}
@@ -206,11 +164,12 @@
             {/if}
             {#if g.main}
               {@const main = g.main}
-              {@render toggle(
-                main.enabled,
-                () => run(main.enabled ? "disable" : "enable", g.id, main.scope, main.projectPath ?? repo),
-                g.id,
-              )}
+              <Switch
+                on={main.enabled}
+                label={g.id}
+                disabled={!!busy}
+                onclick={() => run(main.enabled ? "disable" : "enable", g.id, main.scope, main.projectPath ?? repo)}
+              />
               <button
                 class="text-muted-foreground hover:text-destructive shrink-0 disabled:opacity-50"
                 title="Aus {SCOPE[main.scope]} entfernen"
@@ -225,7 +184,18 @@
         {/each}
       </ul>
 
-      {@render head(`Verfügbar (${avail.items.length} von ${avail.total})`, scopes)}
+      <SectionHead title={`Verfügbar (${avail.items.length} von ${avail.total})`}>
+        <span class="text-muted-foreground text-[10px]">Scope</span>
+        <Segmented
+          value={scopeChoice}
+          options={[
+            ["User", "user"],
+            ["Projekt", "project"],
+          ] as const}
+          onchange={(v) => (scopeChoice = v)}
+          disabled={!!busy}
+        />
+      </SectionHead>
       {#if !avail.items.length}
         <p class="text-muted-foreground px-3 py-2">{q ? `Kein Plugin passt zu „${q}“.` : "Keine weiteren Plugins verfügbar."}</p>
       {/if}
@@ -246,7 +216,7 @@
         {/each}
       </ul>
 
-      {@render head(`Marketplaces (${mps.length})`)}
+      <SectionHead title={`Marketplaces (${mps.length})`} />
       {#if !mps.length}
         <p class="text-muted-foreground px-3 py-2">
           {q ? `Kein Marketplace passt zu „${q}“.` : "Keine Marketplaces. Füge einen hinzu (z. B. anthropics/claude-plugins-official)."}

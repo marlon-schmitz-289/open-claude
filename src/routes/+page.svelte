@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { age } from "$lib/utils";
+  import { age, cn } from "$lib/utils";
   import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -18,7 +18,8 @@
   import { Input } from "$lib/components/ui/input/index.js";
   import FolderIcon from "@lucide/svelte/icons/folder";
   import SunMoonIcon from "@lucide/svelte/icons/sun-moon";
-  import { theme, setMode, type Mode } from "$lib/theme.svelte";
+  import { theme, setMode } from "$lib/theme.svelte";
+  import { Segmented, menuContent, menuItem, menuSeparator } from "$lib/components/kit";
   import RefreshIcon from "@lucide/svelte/icons/refresh-cw";
   import GitBranchIcon from "@lucide/svelte/icons/git-branch";
   import KeyboardIcon from "@lucide/svelte/icons/keyboard";
@@ -966,7 +967,7 @@
     <Button
       variant="ghost"
       size="sm"
-      class="mr-1 h-6 gap-1.5 text-[11px] text-amber-500"
+      class="mr-1 h-6 gap-1.5 text-[11px] text-warning"
       disabled={installingDeps}
       onclick={installDeps}
       title={`Fehlt auf diesem Rechner: ${missing.map((n) => DEPS[n]).join(", ")}. Klick installiert.`}
@@ -1082,13 +1083,13 @@
             <DropdownMenu.Content
               align="end"
               sideOffset={4}
-              class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-56 rounded-lg p-1 text-xs shadow-lg ring-1"
+              class={cn(menuContent, "min-w-56 rounded-lg shadow-lg")}
             >
               <!-- macOS: Dock statt Tray, Autostart ueber die Systemeinstellungen. -->
               {#if !mac}
                 {@render setting("Autostart", autostart, toggleAutostart, PowerIcon)}
                 {@render setting("Schließen legt ins Tray", tray, toggleTray, InboxIcon)}
-                <DropdownMenu.Separator class="bg-border my-1 h-px" />
+                <DropdownMenu.Separator class={menuSeparator} />
               {/if}
               <div class="flex items-center gap-2 px-2 py-1.5">
                 <ZoomInIcon class="text-muted-foreground size-3.5" />
@@ -1118,33 +1119,19 @@
               <div class="flex items-center gap-2 px-2 py-1.5">
                 <SunMoonIcon class="text-muted-foreground size-3.5" />
                 <span class="flex-1">Design</span>
-                <div class="bg-secondary flex rounded p-0.5">
-                  {#each [["System", "system"], ["Hell", "light"], ["Dunkel", "dark"]] as [label, m] (m)}
-                    <button
-                      class="rounded px-1.5 py-0.5 text-[10px] {theme.mode === m
-                        ? 'bg-primary text-primary-foreground'
-                        : 'text-muted-foreground hover:text-foreground'}"
-                      onclick={() => setMode(m as Mode)}>{label}</button
-                    >
-                  {/each}
-                </div>
+                <Segmented
+                  value={theme.mode}
+                  options={[["System", "system"], ["Hell", "light"], ["Dunkel", "dark"]] as const}
+                  onchange={setMode}
+                />
               </div>
-              <DropdownMenu.Separator class="bg-border my-1 h-px" />
+              <DropdownMenu.Separator class={menuSeparator} />
               {@render setting("Among-Us-Easteregg", amongUs.on, () => ((amongUs.on = !amongUs.on), saveAmongUs()), GhostIcon)}
               {#if amongUs.on}
                 <div class="flex items-center gap-2 px-2 py-1.5">
                   <span class="text-muted-foreground w-3.5"></span>
                   <span class="flex-1">Häufigkeit</span>
-                  <div class="bg-secondary flex rounded p-0.5">
-                    {#each RATES as [label, rate] (rate)}
-                      <button
-                        class="rounded px-1.5 py-0.5 text-[10px] {amongUs.rate === rate
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-muted-foreground hover:text-foreground'}"
-                        onclick={() => ((amongUs.rate = rate), saveAmongUs())}>{label}</button
-                      >
-                    {/each}
-                  </div>
+                  <Segmented value={amongUs.rate} options={RATES} onchange={(rate) => ((amongUs.rate = rate), saveAmongUs())} />
                 </div>
                 <label class="flex items-center gap-2 px-2 py-1.5">
                   <VolumeIcon class="text-muted-foreground size-3.5" />
@@ -1161,28 +1148,28 @@
                   />
                 </label>
               {/if}
-              <DropdownMenu.Separator class="bg-border my-1 h-px" />
+              <DropdownMenu.Separator class={menuSeparator} />
               <p class="text-muted-foreground px-2 py-1 text-[10px]">Git: Rückfrage vor</p>
               {#each Object.entries(ASKS) as [key, label] (key)}
                 {@render setting(label, !noAsk[key], () => setNoAsk(key as AskKey, !noAsk[key]), CircleQuestionMarkIcon)}
               {/each}
-              <DropdownMenu.Separator class="bg-border my-1 h-px" />
+              <DropdownMenu.Separator class={menuSeparator} />
               <DropdownMenu.Item
-                class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5"
+                class={cn(menuItem, "py-1.5")}
                 onSelect={() => (profilesOpen = true)}
               >
                 <SparklesIcon class="text-muted-foreground size-3.5" />
                 <span class="flex-1">Skill-Profile</span>
               </DropdownMenu.Item>
               <DropdownMenu.Item
-                class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5"
+                class={cn(menuItem, "py-1.5")}
                 onSelect={() => checkUpdate(true)}
               >
                 <RefreshIcon class="text-muted-foreground size-3.5 {checking ? 'animate-spin' : ''}" />
                 <span class="flex-1">Nach Updates suchen</span>
               </DropdownMenu.Item>
               <DropdownMenu.Item
-                class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5"
+                class={cn(menuItem, "py-1.5")}
                 onSelect={() => (help = true)}
               >
                 <KeyboardIcon class="text-muted-foreground size-3.5" />
@@ -1280,7 +1267,7 @@
                           <span use:onVisible={() => loadUnityInfo(item.repo.path)}>
                             <Badge variant="outline" class="text-muted-foreground gap-1.5 text-[11px]">
                               <span
-                                class="size-2 rounded-full {uinfo?.editorOpen ? 'bg-green-500' : ''}"
+                                class="size-2 rounded-full {uinfo?.editorOpen ? 'bg-success' : ''}"
                                 style={uinfo?.editorOpen ? "" : `background:${LANG_COLOR.Unity}`}
                                 title={uinfo ? (uinfo.editorOpen ? "Editor offen" : "Editor zu") : ""}
                               ></span>
@@ -1318,23 +1305,23 @@
                 </ContextMenu.Trigger>
                 <ContextMenu.Portal>
                   <ContextMenu.Content
-                    class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-52 rounded-lg p-1 text-xs shadow-lg ring-1"
+                    class={cn(menuContent, "min-w-52 rounded-lg shadow-lg")}
                   >
                     {@render repoItem("Git-Ansicht", "Strg+G", () => openGit(item.repo))}
                     {@render repoItem("Editor", "Strg+⇧+E", () => openEdit(item.repo))}
                     {@render repoItem(running.has(item.repo.path) ? "Zur Claude-Sitzung" : "Claude starten", "Strg+⏎", () => launch(item.repo))}
-                    <ContextMenu.Separator class="bg-border my-1 h-px" />
+                    <ContextMenu.Separator class={menuSeparator} />
                     {@render repoItem(mac ? "Im Finder zeigen" : "Im Explorer zeigen", "Strg+E", () => reveal(item.repo))}
                     {@render repoItem("Im Browser öffnen", "", () => browse(item.repo))}
                     {@render repoItem("Pfad kopieren", "", () => navigator.clipboard.writeText(item.repo.path))}
                     {@render repoItem(pinned ? "Nicht mehr anpinnen" : "Anpinnen", "Strg+P", () => togglePin(item.repo.path))}
                     {#if isUnity(item.repo)}
-                      <ContextMenu.Separator class="bg-border my-1 h-px" />
+                      <ContextMenu.Separator class={menuSeparator} />
                       {@render repoItem("Unity-Editor öffnen", "", () => openUnityEditor(item.repo))}
                       {@render repoItem("Unity-Editor schließen …", "", () => (unityClosePath = item.repo.path))}
                       {@render repoItem("Unity-Support einrichten", "", () => setupUnity(item.repo))}
                     {/if}
-                    <ContextMenu.Separator class="bg-border my-1 h-px" />
+                    <ContextMenu.Separator class={menuSeparator} />
                     {@render repoItem("Vom Gerät löschen …", "", () => askTrash(item.repo), true)}
                   </ContextMenu.Content>
                 </ContextMenu.Portal>
@@ -1455,9 +1442,7 @@
 
 {#snippet repoItem(label: string, key: string, onSelect: () => void, destructive = false)}
   <ContextMenu.Item
-    class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 {destructive
-      ? 'text-destructive'
-      : ''}"
+    class={cn(menuItem, "py-1.5", destructive && "text-destructive")}
     {onSelect}
   >
     <span class="flex-1">{label}</span>
@@ -1472,7 +1457,7 @@
 {#snippet setting(label: string, on: boolean, toggle: () => void, Icon: typeof PowerIcon)}
   <!-- Schalter bleiben im offenen Menue, damit man beide nacheinander umlegen kann -->
   <DropdownMenu.Item
-    class="data-highlighted:bg-accent flex cursor-pointer items-center gap-2 rounded px-2 py-1.5"
+    class={cn(menuItem, "py-1.5")}
     closeOnSelect={false}
     onSelect={toggle}
   >

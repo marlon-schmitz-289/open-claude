@@ -1,5 +1,6 @@
 <script lang="ts">
   import Notice from "$lib/components/Notice.svelte";
+  import { RefreshButton } from "$lib/components/kit";
   import { age } from "$lib/utils";
   import { git, forge, type ForgeKind, type Job, type Run, type RunAction, type RunStatus } from "$lib/git";
   import CircleCheckIcon from "@lucide/svelte/icons/circle-check";
@@ -243,14 +244,7 @@
     <span class="text-muted-foreground min-w-0 flex-1 truncate text-[11px]">
       {kind ? label : ""}{active && visible ? " · aktualisiert alle 10 s" : ""}
     </span>
-    <button
-      class="text-muted-foreground hover:text-foreground disabled:opacity-50"
-      title="Neu laden"
-      disabled={loading}
-      onclick={reload}
-    >
-      <RefreshCwIcon class="size-3.5 {loading ? 'animate-spin' : ''}" />
-    </button>
+    <RefreshButton {loading} onclick={reload} />
   </div>
 
   <Notice bind:text={error} />

@@ -2,6 +2,7 @@
   // Vorschau der aktiven oder angehefteten Datei. Der Renderer kommt aus files.PREVIEW_KINDS (nach Endung).
   // Haelt nur Anzeigezustand; pin und url liegen im Store und ueberleben das Umdocken.
   import Markdown from "$lib/components/Markdown.svelte";
+  import { Empty } from "$lib/components/kit";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import PinIcon from "@lucide/svelte/icons/pin";
@@ -93,10 +94,6 @@
   });
 </script>
 
-{#snippet hint(text: string)}
-  <div class="text-muted-foreground grid h-full place-items-center p-4 text-center">{text}</div>
-{/snippet}
-
 <div class="flex h-full min-h-0 flex-col text-xs">
   <div class="border-border flex items-center gap-1 border-b px-1.5 py-1">
     <Input
@@ -155,7 +152,7 @@
           class="size-full border-0 bg-white"
         ></iframe>{/key}
     {:else if !target}
-      {@render hint("Keine Datei für die Vorschau.")}
+      <Empty>Keine Datei für die Vorschau.</Empty>
     {:else if kind === "web"}
       <!-- Zusaetzlich ohne allow-same-origin: alle Projekte liegen auf einem Origin, per fetch laese die Seite sonst fremde Dateien. -->
       <iframe {src} sandbox="allow-scripts allow-forms" title="Vorschau {target}" class="size-full border-0 bg-white"></iframe>
@@ -164,22 +161,22 @@
         <img {src} alt={target} class="max-w-full" />
       </div>
     {:else if kind === null}
-      {@render hint(`Keine Vorschau für ${target}.`)}
+      <Empty>Keine Vorschau für {target}.</Empty>
     {:else if !f}
-      {@render hint("Lädt …")}
+      <Empty>Lädt …</Empty>
     {:else if kind === "markdown"}
       <div class="p-3"><Markdown text={f.text} onerror={(e) => (s.error = e)} /></div>
     {:else if locked}
-      <div class="text-muted-foreground grid h-full place-items-center p-4 text-center">
+      <Empty>
         <div class="max-w-xs space-y-2">
           <p>Die WPF-Vorschau lädt XAML aus diesem Projekt. XAML kann dabei Code ausführen – nur für Projekte erlauben, denen du vertraust.</p>
           <Button size="xs" variant="outline" onclick={() => allowWpf(repo)}>WPF-Vorschau erlauben</Button>
         </div>
-      </div>
+      </Empty>
     {:else if error === NUR_WINDOWS}
-      {@render hint("WPF-Vorschau nur unter Windows")}
+      <Empty>WPF-Vorschau nur unter Windows</Empty>
     {:else if error === DOTNET_FEHLT}
-      <div class="text-muted-foreground grid h-full place-items-center p-4 text-center">
+      <Empty>
         <div>
           Für die WPF-Vorschau fehlt die .NET 8 Desktop Runtime.<br />
           <button
@@ -187,7 +184,7 @@
             onclick={() => forge.openUrl(DOTNET_URL).catch((e) => (s.error = String(e)))}>Bei Microsoft herunterladen</button
           >
         </div>
-      </div>
+      </Empty>
     {:else}
       {#if error}
         <pre class="text-destructive border-border border-b px-2 py-1 font-mono text-[11px] whitespace-pre-wrap select-text" role="alert">{error}</pre>
@@ -197,7 +194,7 @@
           <img src="data:image/png;base64,{png}" alt="WPF-Vorschau {target}" class="max-w-full" />
         </div>
       {:else if !error}
-        {@render hint("Rendert …")}
+        <Empty>Rendert …</Empty>
       {/if}
     {/if}
   </div>

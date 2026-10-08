@@ -10,7 +10,7 @@
   import ArrowDownIcon from "@lucide/svelte/icons/arrow-down";
   import CopyIcon from "@lucide/svelte/icons/copy";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
-  import Loader2Icon from "@lucide/svelte/icons/loader-2";
+  import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
 
   let {
     open = $bindable(false),
@@ -192,7 +192,7 @@
     <div class="flex justify-end gap-1.5">
       <Button variant="outline" size="sm" class="text-xs" disabled={busy} onclick={() => (open = false)}>Abbrechen</Button>
       <Button size="sm" class="gap-1.5 text-xs" disabled={busy || !!issues.length} onclick={save}>
-        {#if busy}<Loader2Icon class="size-3.5 animate-spin" />{/if}
+        {#if busy}<LoaderCircleIcon class="size-3.5 animate-spin" />{/if}
         Speichern
       </Button>
     </div>

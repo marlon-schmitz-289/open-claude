@@ -1,10 +1,10 @@
 <script lang="ts">
   import Notice from "$lib/components/Notice.svelte";
+  import { ConfirmDialog, PromptDialog, Tabs, menuContent, menuItem, menuSeparator } from "$lib/components/kit";
   import { tick, untrack } from "svelte";
   import { DropdownMenu } from "bits-ui";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { Input } from "$lib/components/ui/input/index.js";
   import { git, forge, accountId, type Account, type ForgeKind, type RepoAccount, type Status } from "$lib/git";
   import Sidebar from "./Sidebar.svelte";
   import AskDialog from "./AskDialog.svelte";
@@ -71,8 +71,11 @@
   let note = $state("");
   let shown = $state<{ title: string; diff: string } | null>(null);
   let confirm = $state<{ title: string; message: string; label: string; run: () => Promise<unknown> } | null>(null);
-  let branchName = $state<string | null>(null);
-  let stash = $state<{ message: string; untracked: boolean } | null>(null);
+  // Offen-Flag getrennt, weil PromptDialog einen String bindet
+  let branchOpen = $state(false);
+  let branchName = $state("");
+  let stashOpen = $state(false);
+  let stash = $state({ message: "", untracked: true });
 
   const conflicts = $derived(status?.files.filter((f) => f.conflict).length ?? 0);
   const STATE_LABEL = { merge: "Merge", rebase: "Rebase", "cherry-pick": "Cherry-Pick", revert: "Revert" };
@@ -185,15 +188,17 @@
   }
 
   async function createBranch() {
-    const name = branchName?.trim();
-    branchName = null;
+    if (!branchOpen) return; // doppeltes Enter
+    const name = branchName.trim();
+    branchOpen = false;
     if (name) await run("Branch", () => git.checkout(repo, name, true, null));
   }
 
   async function doStash() {
+    if (!stashOpen) return; // doppeltes Enter
     const s = stash;
-    stash = null;
-    if (s) await run("Stash", () => git.stashPush(repo, s.message.trim() || null, s.untracked));
+    stashOpen = false;
+    await run("Stash", () => git.stashPush(repo, s.message.trim() || null, s.untracked));
   }
 
   /** Gleiche Ref zweimal anklicken soll erneut springen, daher kurz auf null. */
@@ -243,10 +248,10 @@
     <DropdownMenu.Portal>
       <DropdownMenu.Content
         align="start"
-        class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-44 rounded-md p-1 text-xs ring-1"
+        class={menuContent}
       >
         {#each items as [label, onSelect] (label)}
-          <DropdownMenu.Item class="hover:bg-accent data-highlighted:bg-accent cursor-pointer rounded px-2 py-1" {onSelect}
+          <DropdownMenu.Item class={menuItem} {onSelect}
             >{label}</DropdownMenu.Item
           >
         {/each}
@@ -277,8 +282,8 @@
     ])}
     {@render tool("Push", "Push (Strg+Umschalt+P)", push, UploadIcon)}
     {@render menu([["Force-Push …", forcePush]])}
-    {@render tool("Stash", "Änderungen stashen", () => (stash = { message: "", untracked: true }), ArchiveIcon)}
-    {@render tool("Branch", "Neuer Branch ab HEAD", () => (branchName = ""), GitBranchPlusIcon)}
+    {@render tool("Stash", "Änderungen stashen", () => ((stash = { message: "", untracked: true }), (stashOpen = true)), ArchiveIcon)}
+    {@render tool("Branch", "Neuer Branch ab HEAD", () => ((branchName = ""), (branchOpen = true)), GitBranchPlusIcon)}
     <span class="flex-1"></span>
     {#if acct}
       <DropdownMenu.Root onOpenChange={(o) => o && loadAccount()}>
@@ -302,11 +307,11 @@
         <DropdownMenu.Portal>
           <DropdownMenu.Content
             align="end"
-            class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-44 rounded-md p-1 text-xs ring-1"
+            class={menuContent}
           >
             {#each hostAccounts as a (accountId(a))}
               <DropdownMenu.Item
-                class="hover:bg-accent data-highlighted:bg-accent flex cursor-pointer items-center gap-1.5 rounded px-2 py-1"
+                class={menuItem}
                 onSelect={() => setAccount(accountId(a))}
               >
                 <CheckIcon class="size-3 {acct.account === accountId(a) ? '' : 'invisible'}" />
@@ -314,14 +319,14 @@
               </DropdownMenu.Item>
             {/each}
             <DropdownMenu.Item
-              class="hover:bg-accent data-highlighted:bg-accent flex cursor-pointer items-center gap-1.5 rounded px-2 py-1"
+              class={menuItem}
               onSelect={() => setAccount(null)}
             >
               <CheckIcon class="size-3 {acct.account ? 'invisible' : ''}" />
               Standard (System-Git)
             </DropdownMenu.Item>
-            <DropdownMenu.Separator class="bg-border my-1 h-px" />
-            <DropdownMenu.Item class="hover:bg-accent data-highlighted:bg-accent cursor-pointer rounded px-2 py-1" onSelect={onaccounts}
+            <DropdownMenu.Separator class={menuSeparator} />
+            <DropdownMenu.Item class={menuItem} onSelect={onaccounts}
               >Konten verwalten …</DropdownMenu.Item
             >
           </DropdownMenu.Content>
@@ -392,21 +397,17 @@
             }}
           />
         {:else}
-          <div class="border-border flex gap-1 border-b px-2">
-            {#each [["changes", "Änderungen", "Strg+1"], ["history", "Verlauf", "Strg+2"], ["releases", "Releases", "Strg+3"], ["ci", ciKind === "gitlab" ? "Pipelines" : ciKind === "github" ? "Actions" : "CI", "Strg+4"], ...(isUnity ? [["unity", "Unity", "Strg+5"]] : []), ["skills", "Skills", "Strg+6"]] as [id, label, key] (id)}
-              <button
-                class="-mb-px border-b-2 px-2 py-1.5 {tab === id
-                  ? 'border-primary text-foreground'
-                  : 'text-muted-foreground hover:text-foreground border-transparent'}"
-                onclick={() => (tab = id as typeof tab)}
-                title={key}
-              >
-                {label}{#if id === "changes" && status.files.length}<span class="text-muted-foreground ml-1.5 tabular-nums"
-                    >{status.files.length}</span
-                  >{/if}
-              </button>
-            {/each}
-          </div>
+          <Tabs
+            bind:value={tab}
+            tabs={[
+              { id: "changes", label: "Änderungen", title: "Strg+1", count: status.files.length },
+              { id: "history", label: "Verlauf", title: "Strg+2" },
+              { id: "releases", label: "Releases", title: "Strg+3" },
+              { id: "ci", label: ciKind === "gitlab" ? "Pipelines" : ciKind === "github" ? "Actions" : "CI", title: "Strg+4" },
+              ...(isUnity ? [{ id: "unity" as const, label: "Unity", title: "Strg+5" }] : []),
+              { id: "skills", label: "Skills", title: "Strg+6" },
+            ]}
+          />
           <div class="min-h-0 flex-1">
             <!-- Einmal geoeffnet bleiben alle gemountet: Auswahl und Scrollstand ueberleben den Tabwechsel. -->
             <div class="h-full {tab === 'changes' ? '' : 'hidden'}">
@@ -457,50 +458,38 @@
   </Dialog.Content>
 </Dialog.Root>
 
-<Dialog.Root open={confirm !== null} onOpenChange={(o) => !o && (confirm = null)}>
-  <Dialog.Content class="sm:max-w-sm">
-    <Dialog.Header>
-      <Dialog.Title>{confirm?.title}</Dialog.Title>
-      <Dialog.Description>{confirm?.message}</Dialog.Description>
-    </Dialog.Header>
-    <div class="flex justify-end gap-2">
-      <Button variant="ghost" size="sm" onclick={() => (confirm = null)}>Zurück</Button>
-      <Button variant="destructive" size="sm" onclick={doConfirm}>{confirm?.label}</Button>
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
+<ConfirmDialog
+  open={confirm !== null}
+  title={confirm?.title ?? ""}
+  message={confirm?.message}
+  action={confirm?.label ?? ""}
+  onconfirm={doConfirm}
+  oncancel={() => (confirm = null)}
+/>
 
-<Dialog.Root open={branchName !== null} onOpenChange={(o) => !o && (branchName = null)}>
-  <Dialog.Content class="sm:max-w-sm">
-    <Dialog.Header>
-      <Dialog.Title>Neuer Branch</Dialog.Title>
-      <Dialog.Description>Wird ab HEAD angelegt und ausgecheckt.</Dialog.Description>
-    </Dialog.Header>
-    {#if branchName !== null}
-      <Input bind:value={branchName} placeholder="feature/…" class="font-mono" onkeydown={(e) => e.key === "Enter" && createBranch()} autofocus />
-    {/if}
-    <div class="flex justify-end gap-2">
-      <Button variant="ghost" size="sm" onclick={() => (branchName = null)}>Abbrechen</Button>
-      <Button size="sm" onclick={createBranch}>Anlegen</Button>
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
+<PromptDialog
+  open={branchOpen}
+  title="Neuer Branch"
+  description="Wird ab HEAD angelegt und ausgecheckt."
+  bind:value={branchName}
+  placeholder="feature/…"
+  action="Anlegen"
+  mono
+  onsubmit={createBranch}
+  oncancel={() => (branchOpen = false)}
+/>
 
-<Dialog.Root open={stash !== null} onOpenChange={(o) => !o && (stash = null)}>
-  <Dialog.Content class="sm:max-w-sm">
-    <Dialog.Header>
-      <Dialog.Title>Änderungen stashen</Dialog.Title>
-    </Dialog.Header>
-    {#if stash}
-      <Input bind:value={stash.message} placeholder="Nachricht (optional)" onkeydown={(e) => e.key === "Enter" && doStash()} autofocus />
-      <label class="flex items-center gap-2 text-xs">
-        <input type="checkbox" bind:checked={stash.untracked} class="accent-primary" />
-        Neue (untracked) Dateien einschließen
-      </label>
-    {/if}
-    <div class="flex justify-end gap-2">
-      <Button variant="ghost" size="sm" onclick={() => (stash = null)}>Abbrechen</Button>
-      <Button size="sm" onclick={doStash}>Stashen</Button>
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
+<PromptDialog
+  open={stashOpen}
+  title="Änderungen stashen"
+  bind:value={stash.message}
+  placeholder="Nachricht (optional)"
+  action="Stashen"
+  onsubmit={doStash}
+  oncancel={() => (stashOpen = false)}
+>
+  <label class="flex items-center gap-2 text-xs">
+    <input type="checkbox" bind:checked={stash.untracked} class="accent-primary" />
+    Neue (untracked) Dateien einschließen
+  </label>
+</PromptDialog>

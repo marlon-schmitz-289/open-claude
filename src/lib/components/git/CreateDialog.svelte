@@ -1,11 +1,11 @@
 <script lang="ts">
   import { open as pickFolder } from "@tauri-apps/plugin-dialog";
   import { forge, accountId, type Account, type RepoLang } from "$lib/git";
+  import { FolderField } from "$lib/components/kit";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
-  import FolderIcon from "@lucide/svelte/icons/folder";
-  import Loader2Icon from "@lucide/svelte/icons/loader-2";
+  import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
 
   let {
     open = $bindable(false),
@@ -130,17 +130,7 @@
       </div>
 
       <span class="text-muted-foreground pt-2">Ordner</span>
-      <div class="flex items-center gap-1.5">
-        <Input
-          bind:value={dest}
-          oninput={() => (destTouched = true)}
-          placeholder="Zielordner"
-          class="font-mono text-xs"
-        />
-        <Button variant="outline" size="icon" class="shrink-0" onclick={browseDest} aria-label="Ordner wählen">
-          <FolderIcon class="size-3.5" />
-        </Button>
-      </div>
+      <FolderField bind:value={dest} oninput={() => (destTouched = true)} onbrowse={browseDest} />
 
       <span class="text-muted-foreground pt-2">Sprache</span>
       <div>
@@ -195,7 +185,7 @@
 
     {#if status}
       <p class="text-muted-foreground flex items-center gap-1.5 text-xs">
-        <Loader2Icon class="size-3.5 animate-spin" />{status}
+        <LoaderCircleIcon class="size-3.5 animate-spin" />{status}
       </p>
     {/if}
     {#if error}<p class="text-destructive text-xs whitespace-pre-wrap">{error}</p>{/if}
@@ -209,7 +199,7 @@
         disabled={busy}>{done ? "Schließen" : "Abbrechen"}</Button
       >
       <Button size="sm" class="gap-1.5 text-xs" disabled={busy || done || !valid} onclick={doCreate}>
-        {#if busy}<Loader2Icon class="size-3.5 animate-spin" />{/if}
+        {#if busy}<LoaderCircleIcon class="size-3.5 animate-spin" />{/if}
         Anlegen
       </Button>
     </div>

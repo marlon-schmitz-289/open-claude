@@ -4,6 +4,7 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import Notice from "$lib/components/Notice.svelte";
+  import { Segmented } from "$lib/components/kit";
   import { fuzzy } from "$lib/fuzzy";
   import { skills, renameProfile, fromProject, adjust, emptyProject, type SkillStore, type SkillsInfo } from "$lib/skills";
   import TrashIcon from "@lucide/svelte/icons/trash-2";
@@ -79,20 +80,6 @@
     open = false;
   }
 </script>
-
-{#snippet tri<V>(value: V | undefined, options: [string, V][], onset: (v: V | undefined) => void)}
-  <div class="bg-secondary flex shrink-0 rounded p-0.5">
-    {#each [["–", undefined], ...options] as [label, v] (label)}
-      <button
-        class="rounded px-1.5 py-0.5 text-[10px] {value === v
-          ? 'bg-primary text-primary-foreground'
-          : 'text-muted-foreground hover:text-foreground'}"
-        title={v === undefined ? "Nicht festgelegt" : ""}
-        onclick={() => onset(v as V | undefined)}>{label}</button
-      >
-    {/each}
-  </div>
-{/snippet}
 
 <Dialog.Root bind:open>
   <Dialog.Content class="flex h-[85vh] flex-col sm:max-w-4xl">
@@ -176,7 +163,15 @@
               {#each info.plugins as id (id)}
                 <div class="flex items-center gap-2 py-1">
                   <span class="flex-1 truncate font-mono text-[11px]">Plugin {id}</span>
-                  {@render tri(profile.plugins[id], [["an", true], ["aus", false]], (v) => (draft.profiles[sel] = adjust(profile, "plugin", id, v)))}
+                  <Segmented
+                    value={profile.plugins[id]}
+                    options={[
+                      ["–", undefined, "Nicht festgelegt"],
+                      ["an", true],
+                      ["aus", false],
+                    ] as const}
+                    onchange={(v) => (draft.profiles[sel] = adjust(profile, "plugin", id, v))}
+                  />
                 </div>
               {/each}
               {#each list as sk (sk.key)}
@@ -185,7 +180,15 @@
                     <div class="truncate font-mono text-[11px]">{sk.key}</div>
                     {#if sk.description}<div class="text-muted-foreground truncate text-[11px]" title={sk.description}>{sk.description}</div>{/if}
                   </div>
-                  {@render tri(profile.overrides[sk.key], [["an", "on"], ["aus", "off"]] as const, (v) => (draft.profiles[sel] = adjust(profile, "skill", sk.key, v)))}
+                  <Segmented
+                    value={profile.overrides[sk.key]}
+                    options={[
+                      ["–", undefined, "Nicht festgelegt"],
+                      ["an", "on"],
+                      ["aus", "off"],
+                    ] as const}
+                    onchange={(v) => (draft.profiles[sel] = adjust(profile, "skill", sk.key, v))}
+                  />
                 </div>
               {/each}
             {:else}
