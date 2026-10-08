@@ -6,7 +6,7 @@
   import Notice from "$lib/components/Notice.svelte";
   import Splitter, { stored } from "$lib/components/Splitter.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { ContextItem, menuContent } from "$lib/components/kit";
+  import { ContextItem, Tabs, menuContent, paneBar } from "$lib/components/kit";
   import { cn } from "$lib/utils";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import CircleCheckIcon from "@lucide/svelte/icons/circle-check";
@@ -106,7 +106,7 @@
 {/snippet}
 
 <div class="flex h-full min-h-0 flex-col text-xs">
-  <div class="border-border flex flex-wrap items-center gap-0.5 border-b px-1 py-0.5">
+  <div class="{paneBar} flex-wrap py-0.5">
     <Button variant="ghost" size="xs" disabled={!!t.run || t.scanning} title="Alle Tests ausführen" onclick={() => run("all")}
       ><PlayIcon /> Alle</Button
     >
@@ -232,16 +232,14 @@
 
   <Splitter bind:size={detailH} axis="y" min={60} invert key="tests-detail" />
   <div class="border-border flex min-h-0 flex-col border-t" style="height:{detailH}px">
-    <div class="border-border flex shrink-0 border-b px-1" role="tablist">
-      {#each [["details", "Details"], ["output", "Ausgabe"]] as const as [id, label] (id)}
-        <button
-          role="tab"
-          aria-selected={t.tab === id}
-          class="border-b-2 px-2 py-0.5 text-[11px] {t.tab === id ? 'border-primary text-foreground' : 'text-muted-foreground hover:text-foreground border-transparent'}"
-          onclick={() => (t.tab = id)}>{label}</button
-        >
-      {/each}
-    </div>
+    <Tabs
+      dense
+      tabs={[
+        { id: "details", label: "Details" },
+        { id: "output", label: "Ausgabe" },
+      ]}
+      bind:value={() => t.tab, (v) => (t.tab = v)}
+    />
     {#if t.tab === "output"}
       <pre bind:this={out} class="min-h-0 flex-1 overflow-auto p-2 font-mono text-[11px] whitespace-pre-wrap">{tail.join("\n")}</pre>
     {:else if !sel}

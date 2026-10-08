@@ -1,5 +1,6 @@
 <script lang="ts" module>
-  export type TabInfo = { title: string; hint?: string; dirty?: boolean; closable?: boolean };
+  import XIcon from "@lucide/svelte/icons/x";
+  export type TabInfo = { title: string; hint?: string; dirty?: boolean; closable?: boolean; icon?: typeof XIcon; tint?: string };
 </script>
 
 <script lang="ts">
@@ -9,7 +10,6 @@
   import type { Snippet } from "svelte";
   import Splitter from "$lib/components/Splitter.svelte";
   import { activate, edgeAt, groupOf, moveTab, resize, splitAt, type Edge, type Group, type Layout, type Node, type PanelId } from "$lib/dock";
-  import XIcon from "@lucide/svelte/icons/x";
 
   let {
     layout,
@@ -72,7 +72,8 @@
     }
     for (const body of root.querySelectorAll<HTMLElement>("[data-body]")) {
       const r = body.getBoundingClientRect();
-      if (!inside(r)) continue;
+      // Treffer samt Abstand um die Karte (Split-Kind), sonst faellt der Drop in der Luecke weg.
+      if (!inside(body.parentElement!.parentElement!.getBoundingClientRect())) continue;
       const group = body.dataset.body!;
       const edge = edgeAt(x - r.left, y - r.top, r.width, r.height);
       // Mitte der eigenen Gruppe: der Tab liegt schon dort.
@@ -174,64 +175,74 @@
       {/each}
     </div>
   {:else}
-    <div class="flex min-h-0 min-w-0 flex-col" style="flex:{grow} 1 0">
-      <div data-bar={n.id} role="tablist" class="bg-chrome border-border flex h-8 shrink-0 overflow-x-auto overflow-y-hidden border-b px-1 select-none">
-        {#each n.tabs as id (id)}
-          {@const t = tab(id)}
-          <div
-            data-tab
-            role="tab"
-            tabindex={n.active === id ? 0 : -1}
-            aria-selected={n.active === id}
-            title={t.hint}
-            class="group/tab flex shrink-0 cursor-default items-center gap-1 border-b-2 pr-1 pl-2 outline-none focus-visible:bg-secondary {n.active ===
-            id
-              ? 'border-primary text-foreground'
-              : 'text-muted-foreground hover:text-foreground border-transparent'} {drag?.on && drag.id === id ? 'opacity-50' : ''}"
-            onpointerdown={(e) => down(e, id)}
-            onpointermove={move}
-            onpointerup={up}
-            onclick={() => (dragged ? (dragged = false) : select(id, n.id))}
-            onauxclick={(e) => e.button === 1 && t.closable !== false && onclose(id)}
-            onkeydown={(e) => key(e, n, id)}
-          >
-            <span class="whitespace-nowrap">{t.title}</span>
-            {#if t.closable !== false}
-              <!-- Ungespeichert: Punkt, der beim Ueberfahren zum x wird. Per Tastatur schliesst Entf auf dem Tab. -->
-              <button
-                tabindex="-1"
-                aria-label="{t.title} schließen"
-                class="hover:bg-secondary grid size-4 place-items-center rounded {t.dirty || n.active === id
-                  ? ''
-                  : 'opacity-0 group-hover/tab:opacity-100'}"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onclose(id);
-                }}
-              >
-                {#if t.dirty}<span class="bg-foreground size-1.5 rounded-full group-hover/tab:hidden"></span>{/if}
-                <XIcon class="size-3 {t.dirty ? 'hidden group-hover/tab:block' : ''}" />
-              </button>
-            {:else}
-              <span class="w-1"></span>
-            {/if}
-          </div>
-        {/each}
-      </div>
-      <!-- Der Bereich meldet nur, welche Gruppe zuletzt benutzt wurde; bedient wird der Inhalt. -->
-      <!-- svelte-ignore a11y_interactive_supports_focus -->
+    <!-- Aeusseres div bleibt Split-Kind (pair() misst es samt Abstand), die Karte liegt darin. -->
+    <div class="flex min-h-0 min-w-0 flex-col p-1" style="flex:{grow} 1 0">
       <div
-        data-body={n.id}
-        role="tabpanel"
-        class="relative min-h-0 flex-1 overflow-hidden {busy ? 'pointer-events-none' : ''}"
-        onpointerdown={() => n.active && onfocus?.(n.active, n.id)}
-        onfocusin={() => n.active && onfocus?.(n.active, n.id)}
+        class="bg-card ring-foreground/5 focus-within:ring-primary/30 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg shadow-sm ring-1 shadow-black/5 transition-shadow dark:shadow-black/20"
       >
-        {#if n.active}
-          {#key n.active}{@render panel(n.active)}{/key}
-        {:else}
-          {@render empty?.()}
-        {/if}
+        <div
+          data-bar={n.id}
+          role="tablist"
+          class="bg-chrome/50 border-border/60 flex h-8 shrink-0 items-center gap-0.5 overflow-x-auto overflow-y-hidden border-b px-1 select-none"
+        >
+          {#each n.tabs as id (id)}
+            {@const t = tab(id)}
+            <div
+              data-tab
+              role="tab"
+              tabindex={n.active === id ? 0 : -1}
+              aria-selected={n.active === id}
+              title={t.hint}
+              class="group/tab focus-visible:ring-ring/50 flex h-6 shrink-0 cursor-default items-center gap-1.5 rounded-md pr-1 pl-2 outline-none focus-visible:ring-2 {n.active ===
+              id
+                ? 'bg-card text-foreground ring-foreground/10 shadow-xs ring-1'
+                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'} {drag?.on && drag.id === id ? 'opacity-50' : ''}"
+              onpointerdown={(e) => down(e, id)}
+              onpointermove={move}
+              onpointerup={up}
+              onclick={() => (dragged ? (dragged = false) : select(id, n.id))}
+              onauxclick={(e) => e.button === 1 && t.closable !== false && onclose(id)}
+              onkeydown={(e) => key(e, n, id)}
+            >
+              {#if t.icon}<t.icon class="size-3.5 shrink-0 {t.tint ?? ''}" />{/if}
+              <span class="whitespace-nowrap">{t.title}</span>
+              {#if t.closable !== false}
+                <!-- Ungespeichert: Punkt, der beim Ueberfahren zum x wird. Per Tastatur schliesst Entf auf dem Tab. -->
+                <button
+                  tabindex="-1"
+                  aria-label="{t.title} schließen"
+                  class="hover:bg-secondary grid size-4 place-items-center rounded {t.dirty || n.active === id
+                    ? ''
+                    : 'opacity-0 group-hover/tab:opacity-100'}"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    onclose(id);
+                  }}
+                >
+                  {#if t.dirty}<span class="bg-primary size-1.5 rounded-full group-hover/tab:hidden"></span>{/if}
+                  <XIcon class="size-3 {t.dirty ? 'hidden group-hover/tab:block' : ''}" />
+                </button>
+              {:else}
+                <span class="w-1"></span>
+              {/if}
+            </div>
+          {/each}
+        </div>
+        <!-- Der Bereich meldet nur, welche Gruppe zuletzt benutzt wurde; bedient wird der Inhalt. -->
+        <!-- svelte-ignore a11y_interactive_supports_focus -->
+        <div
+          data-body={n.id}
+          role="tabpanel"
+          class="relative min-h-0 flex-1 overflow-hidden {busy ? 'pointer-events-none' : ''}"
+          onpointerdown={() => n.active && onfocus?.(n.active, n.id)}
+          onfocusin={() => n.active && onfocus?.(n.active, n.id)}
+        >
+          {#if n.active}
+            {#key n.active}{@render panel(n.active)}{/key}
+          {:else}
+            {@render empty?.()}
+          {/if}
+        </div>
       </div>
     </div>
   {/if}
@@ -250,6 +261,6 @@
 >
   {@render node(layout, [], 1)}
   {#if hint}
-    <div class="bg-primary/25 border-primary pointer-events-none absolute z-20 border" style={hint.style}></div>
+    <div class="bg-primary/15 border-primary/60 pointer-events-none absolute z-20 rounded-md border" style={hint.style}></div>
   {/if}
 </div>

@@ -5,8 +5,9 @@
   let {
     tabs,
     value = $bindable(),
+    dense = false,
     children,
-  }: { tabs: { id: T; label: string; count?: number; title?: string }[]; value: T; children?: Snippet } = $props();
+  }: { tabs: { id: T; label: string; count?: number; title?: string }[]; value: T; dense?: boolean; children?: Snippet } = $props();
 </script>
 
 <div class="border-border flex items-center gap-1 border-b px-2" role="tablist">
@@ -15,7 +16,7 @@
       role="tab"
       aria-selected={value === t.id}
       title={t.title}
-      class="-mb-px border-b-2 px-2 py-1.5 {value === t.id
+      class="-mb-px border-b-2 px-2 {dense ? 'py-1 text-[11px]' : 'py-1.5'} {value === t.id
         ? 'border-primary text-foreground'
         : 'text-muted-foreground hover:text-foreground border-transparent'}"
       onclick={() => (value = t.id)}

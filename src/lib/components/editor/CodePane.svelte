@@ -6,9 +6,8 @@
   import { indentWithTab, isolateHistory } from "@codemirror/commands";
   import { setDiagnostics } from "@codemirror/lint";
   import { Button } from "$lib/components/ui/button/index.js";
-  import * as Dialog from "$lib/components/ui/dialog/index.js";
-  import DiffView from "$lib/components/git/DiffView.svelte";
-  import { Empty } from "$lib/components/kit";
+  import { DiffDialog, Empty } from "$lib/components/kit";
+  import TriangleAlertIcon from "@lucide/svelte/icons/triangle-alert";
   import { diff, edited, editor, flush, keep, peek, prefs, reload, save, snapKey, snapshots, toggleWrap } from "$lib/editor.svelte";
   import { huge, span } from "$lib/editor.logic";
   import { lang, language, setTestMarks, testGutter, theme, wrap } from "./cm";
@@ -145,28 +144,19 @@
 {:else}
   <div class="flex h-full min-h-0 flex-col">
     {#if f.conflict}
-      <div class="bg-destructive/15 flex shrink-0 flex-wrap items-center gap-1.5 border-b px-3 py-1.5 text-xs">
-        <span class="mr-auto">Datei wurde außerhalb {f.conflict === "deleted" ? "gelöscht" : "geändert"}.</span>
+      <div class="bg-warning/10 border-border/60 flex shrink-0 flex-wrap items-center gap-1.5 border-b px-3 py-1.5 text-xs">
+        <TriangleAlertIcon class="text-warning size-3.5 shrink-0" />
+        <span class="text-warning mr-auto">Datei wurde außerhalb {f.conflict === "deleted" ? "gelöscht" : "geändert"}.</span>
         <Button size="xs" variant="outline" onclick={() => reload(repo, path)}>Neu laden</Button>
         <Button size="xs" variant="outline" onclick={() => keep(repo, path)}>Meine behalten</Button>
         <Button size="xs" variant="outline" onclick={showDiff}>Vergleichen</Button>
       </div>
     {/if}
     {#if plain}
-      <div class="text-muted-foreground shrink-0 border-b px-3 py-1 text-xs">Große Datei: ohne Highlighting</div>
+      <div class="text-muted-foreground border-border/60 shrink-0 border-b px-3 py-1 text-xs">Große Datei: ohne Highlighting</div>
     {/if}
     <div bind:this={host} class="min-h-0 flex-1 overflow-hidden"></div>
   </div>
 
-  <Dialog.Root open={compare !== null} onOpenChange={(o) => !o && (compare = null)}>
-    <Dialog.Content class="flex max-h-[85vh] flex-col sm:max-w-4xl">
-      <Dialog.Header>
-        <Dialog.Title>Platte → meine Änderungen</Dialog.Title>
-        <Dialog.Description>{path}</Dialog.Description>
-      </Dialog.Header>
-      <div class="min-h-0 flex-1 overflow-auto">
-        <DiffView diff={compare ?? ""} empty="Kein Unterschied." />
-      </div>
-    </Dialog.Content>
-  </Dialog.Root>
+  <DiffDialog diff={compare} title="Platte → meine Änderungen" description={path} empty="Kein Unterschied." onclose={() => (compare = null)} />
 {/if}

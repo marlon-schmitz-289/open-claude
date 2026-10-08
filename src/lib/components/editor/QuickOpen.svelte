@@ -4,6 +4,7 @@
   import { fuzzy } from "$lib/fuzzy";
   import { fs } from "$lib/files";
   import { editor, open as openFile } from "$lib/editor.svelte";
+  import { fileIcon } from "$lib/components/kit";
 
   let { repo, open = $bindable(false) }: { repo: string; open: boolean } = $props();
 
@@ -45,7 +46,9 @@
     <Command.Empty>Keine Datei gefunden.</Command.Empty>
     {#each hits as path (path)}
       {@const cut = path.lastIndexOf("/") + 1}
+      {@const ic = fileIcon(path)}
       <Command.Item value={path} onSelect={() => pick(path)}>
+        <ic.icon class="size-3.5 {ic.tint}" />
         <span class="truncate">{path.slice(cut)}</span>
         <span class="text-muted-foreground min-w-0 flex-1 truncate text-xs">{path.slice(0, cut)}</span>
       </Command.Item>

@@ -2,7 +2,7 @@
   // Vorschau der aktiven oder angehefteten Datei. Der Renderer kommt aus files.PREVIEW_KINDS (nach Endung).
   // Haelt nur Anzeigezustand; pin und url liegen im Store und ueberleben das Umdocken.
   import Markdown from "$lib/components/Markdown.svelte";
-  import { Empty } from "$lib/components/kit";
+  import { Empty, paneBar } from "$lib/components/kit";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import PinIcon from "@lucide/svelte/icons/pin";
@@ -95,7 +95,7 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col text-xs">
-  <div class="border-border flex items-center gap-1 border-b px-1.5 py-1">
+  <div class={paneBar}>
     <Input
       bind:value={draft}
       placeholder={r.current?.url || (target ?? "http://localhost:5173")}

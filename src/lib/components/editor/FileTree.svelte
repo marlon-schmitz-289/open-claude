@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { ContextMenu } from "bits-ui";
   import Notice from "$lib/components/Notice.svelte";
-  import { ContextItem, PromptDialog, menuContent } from "$lib/components/kit";
+  import { ContextItem, PromptDialog, fileIcon, menuContent, paneBar } from "$lib/components/kit";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import FilePlusIcon from "@lucide/svelte/icons/file-plus";
   import FolderPlusIcon from "@lucide/svelte/icons/folder-plus";
@@ -114,18 +114,18 @@
 </script>
 
 <div class="flex h-full flex-col text-xs">
-  <div class="border-border flex items-center border-b py-0.5 pr-1 pl-2">
-    <span class="text-muted-foreground min-w-0 flex-1 truncate text-[10px]" title={repo}
+  <div class="{paneBar} pl-2.5">
+    <span class="text-foreground min-w-0 flex-1 truncate text-[11px] font-semibold" title={repo}
       >{repo.split(/[\\/]/).pop()}</span
     >
     <button
-      class="text-muted-foreground hover:text-foreground grid size-5 place-items-center rounded"
+      class="text-muted-foreground hover:bg-secondary hover:text-foreground grid size-5 place-items-center rounded"
       title="Neue Datei im Projektordner"
       aria-label="Neue Datei"
       onclick={() => create("", false)}><FilePlusIcon class="size-3" /></button
     >
     <button
-      class="text-muted-foreground hover:text-foreground grid size-5 place-items-center rounded"
+      class="text-muted-foreground hover:bg-secondary hover:text-foreground grid size-5 place-items-center rounded"
       title="Neuer Ordner im Projektordner"
       aria-label="Neuer Ordner"
       onclick={() => create("", true)}><FolderPlusIcon class="size-3" /></button
@@ -133,17 +133,17 @@
   </div>
   <Notice bind:text={error} />
 
-  <div class="min-h-0 flex-1 overflow-y-auto py-1">
+  <div class="min-h-0 flex-1 overflow-y-auto px-1.5 py-1">
     {#each visible as r (r.path)}
       <!-- Neues landet im Ordner selbst bzw. neben der Datei. -->
       {@const dir = r.dir ? r.path : dirname(r.path)}
       <ContextMenu.Root>
         <ContextMenu.Trigger>
           <button
-            class="hover:bg-accent flex w-full items-center gap-1 py-0.5 pr-2 text-left text-[11px] {r.ignored
+            class="flex h-6 w-full items-center gap-1.5 rounded-md pr-2 text-left text-xs {r.ignored
               ? 'opacity-50'
-              : ''} {r.path === s.active ? 'bg-accent text-primary' : ''}"
-            style="padding-left:{8 + r.depth * 12}px"
+              : ''} {r.path === s.active ? 'bg-accent text-foreground' : 'hover:bg-accent/50'}"
+            style="padding-left:{4 + r.depth * 12}px"
             onclick={() => click(r)}
             aria-expanded={r.dir ? r.open : undefined}
             title={r.path}
@@ -151,7 +151,10 @@
             <ChevronRightIcon
               class="size-3 shrink-0 transition-transform {r.open ? 'rotate-90' : ''} {r.dir ? '' : 'invisible'}"
             />
-            <span class="min-w-0 flex-1 truncate font-mono">{r.name}</span>
+            <!-- Ordner ohne Icon, der Chevron reicht -->
+            {#if !r.dir}{@const ic = fileIcon(r.path)}<ic.icon class="size-3.5 shrink-0 {ic.tint}" />{/if}
+            <span class="min-w-0 flex-1 truncate">{r.name}</span>
+            {#if s.files[r.path]?.dirty}<span class="bg-primary size-1.5 shrink-0 rounded-full"></span>{/if}
           </button>
         </ContextMenu.Trigger>
         <ContextMenu.Portal>

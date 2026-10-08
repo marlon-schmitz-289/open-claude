@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseDiff, hunkPatch, linesPatch } from "./diff.ts";
+import { parseDiff, hunkPatch, linesPatch, fileDiff, stat } from "./diff.ts";
 
 const sample = `diff --git a/src/x.ts b/src/x.ts
 index 1111111..2222222 100644
@@ -96,4 +96,48 @@ test("git apply akzeptiert Hunk- und Zeilen-Patches", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("fileDiff: Roundtrip je Datei, stat zaehlt", () => {
+  const mixed = `diff --git a/src/y.ts b/src/y.ts
+index 1111111..2222222 100644
+--- a/src/y.ts
++++ b/src/y.ts
+@@ -1,4 +1,5 @@ export function g() {
+ a
+-b
++B
++C
+ c
+-d
++D
+diff --git a/alt.ts b/neu.ts
+similarity index 80%
+rename from alt.ts
+rename to neu.ts
+index 3333333..4444444 100644
+--- a/alt.ts
++++ b/neu.ts
+@@ -1 +1 @@
+-x
++y
+diff --git a/e.txt b/e.txt
+index 5555555..6666666 100644
+--- a/e.txt
++++ b/e.txt
+@@ -1,2 +1,2 @@
+ a
+-b
+\\ No newline at end of file
++c
+\\ No newline at end of file
+diff --git a/bild.png b/bild.png
+index 7777777..8888888 100644
+Binary files a/bild.png and b/bild.png differ
+`;
+  const files = parseDiff(mixed);
+  assert.equal(files.length, 4);
+  for (const f of files) assert.deepEqual(parseDiff(fileDiff(f)), [f]);
+  assert.deepEqual(stat(files[0]), { a: 3, d: 2 });
+  assert.deepEqual(stat(files[3]), { a: 0, d: 0 });
 });

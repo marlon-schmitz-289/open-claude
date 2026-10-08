@@ -9,3 +9,6 @@ export { default as Empty } from "./Empty.svelte";
 export { default as FolderField } from "./FolderField.svelte";
 export { default as ConfirmDialog } from "./ConfirmDialog.svelte";
 export { default as PromptDialog } from "./PromptDialog.svelte";
+export { default as DiffDialog } from "./DiffDialog.svelte";
+export { fileIcon } from "./fileIcon";
+export { paneBar } from "./pane";

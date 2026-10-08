@@ -112,6 +112,21 @@ export function parseDiff(text: string): DiffFile[] {
 
 const PREFIX: Record<LineKind, string> = { add: "+", del: "-", ctx: " ", meta: "" };
 
+/** Unified Diff nur dieser Datei (fuer DiffView); parseDiff(fileDiff(f)) ergibt wieder [f]. */
+export const fileDiff = (f: DiffFile) =>
+  [...f.head, ...f.hunks.flatMap((h) => [h.header, ...h.lines.map((l) => PREFIX[l.kind] + l.text)])].join("\n") + "\n";
+
+/** Hinzugefuegte/geloeschte Zeilen einer Datei. */
+export function stat(f: DiffFile) {
+  let [a, d] = [0, 0];
+  for (const h of f.hunks)
+    for (const l of h.lines) {
+      if (l.kind === "add") a++;
+      else if (l.kind === "del") d++;
+    }
+  return { a, d };
+}
+
 function emit(head: string[], hunk: Hunk, lines: DiffLine[]): string {
   const oldN = lines.filter((l) => l.kind !== "add" && l.kind !== "meta").length;
   const newN = lines.filter((l) => l.kind !== "del" && l.kind !== "meta").length;

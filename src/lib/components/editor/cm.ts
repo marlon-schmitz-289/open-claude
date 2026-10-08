@@ -9,33 +9,54 @@ import type { St } from "../../testing.logic.ts";
 
 const chrome = EditorView.theme(
   {
-    "&": { height: "100%", color: "var(--foreground)", backgroundColor: "var(--background)", fontSize: "13px" },
+    "&": { height: "100%", color: "var(--foreground)", backgroundColor: "var(--card)", fontSize: "13px" },
     // body hat user-select: none; ohne das laesst WebKit im Editor weder markieren noch tippen.
-    ".cm-content": { caretColor: "var(--primary)", userSelect: "text", WebkitUserSelect: "text" },
-    ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.5" },
+    ".cm-content": { caretColor: "var(--primary)", userSelect: "text", WebkitUserSelect: "text", padding: "8px 0" },
+    ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.6" },
     "&.cm-focused": { outline: "none" },
     ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--primary)" },
-    "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
-      { backgroundColor: "color-mix(in oklch, var(--primary) 30%, transparent)" },
-    ".cm-activeLine": { backgroundColor: "color-mix(in oklch, var(--foreground) 4%, transparent)" },
-    ".cm-gutters": { backgroundColor: "var(--background)", color: "var(--muted-foreground)", border: "none" },
+    // Fokussiert kraeftiger als unfokussiert
+    ".cm-selectionBackground": { backgroundColor: "color-mix(in oklch, var(--primary) 20%, transparent)" },
+    "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-content ::selection": {
+      backgroundColor: "color-mix(in oklch, var(--primary) 30%, transparent)",
+    },
+    ".cm-activeLine": { backgroundColor: "color-mix(in oklch, var(--primary) 5%, transparent)" },
+    ".cm-gutters": {
+      backgroundColor: "var(--card)",
+      color: "color-mix(in oklch, var(--muted-foreground) 55%, transparent)",
+      border: "none",
+    },
+    ".cm-lineNumbers .cm-gutterElement": { padding: "0 8px 0 12px" },
     ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--foreground)" },
+    // Faltpfeile nur beim Ueberfahren der Gutter
+    ".cm-foldGutter .cm-gutterElement": { opacity: 0, transition: "opacity .15s" },
+    ".cm-gutters:hover .cm-foldGutter .cm-gutterElement": { opacity: 1 },
     ".cm-foldPlaceholder": { backgroundColor: "var(--muted)", border: "none", color: "var(--muted-foreground)" },
     ".cm-selectionMatch": { backgroundColor: "color-mix(in oklch, var(--primary) 18%, transparent)" },
     ".cm-searchMatch": { backgroundColor: "oklch(0.8 0.13 85 / 0.3)" },
     ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "oklch(0.8 0.13 85 / 0.55)" },
-    "&.cm-focused .cm-matchingBracket": { backgroundColor: "color-mix(in oklch, var(--primary) 35%, transparent)" },
+    "&.cm-focused .cm-matchingBracket": {
+      backgroundColor: "color-mix(in oklch, var(--primary) 12%, transparent)",
+      outline: "1px solid color-mix(in oklch, var(--primary) 45%, transparent)",
+    },
     ".cm-panels": { backgroundColor: "var(--card)", color: "var(--foreground)" },
-    ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--border)" },
-    ".cm-panels.cm-panels-bottom": { borderTop: "1px solid var(--border)" },
-    ".cm-textfield": { backgroundColor: "var(--background)", border: "1px solid var(--input)", borderRadius: "4px" },
+    ".cm-panels.cm-panels-top": { borderBottom: "1px solid color-mix(in oklch, var(--border) 60%, transparent)" },
+    ".cm-panels.cm-panels-bottom": { borderTop: "1px solid color-mix(in oklch, var(--border) 60%, transparent)" },
+    ".cm-textfield": { backgroundColor: "var(--background)", border: "1px solid var(--input)", borderRadius: "6px" },
     ".cm-button": {
       backgroundImage: "none",
       backgroundColor: "var(--secondary)",
       border: "1px solid var(--border)",
-      borderRadius: "4px",
+      borderRadius: "6px",
     },
-    ".cm-tooltip": { backgroundColor: "var(--popover)", color: "var(--popover-foreground)", border: "1px solid var(--border)", borderRadius: "6px" },
+    ".cm-tooltip": {
+      backgroundColor: "var(--popover)",
+      color: "var(--popover-foreground)",
+      border: "1px solid color-mix(in oklch, var(--foreground) 10%, transparent)",
+      borderRadius: "8px",
+      boxShadow: "0 8px 24px rgb(0 0 0 / 0.12)",
+      overflow: "hidden",
+    },
     ".cm-tooltip-autocomplete > ul > li[aria-selected]": {
       backgroundColor: "var(--accent)",
       color: "var(--accent-foreground)",

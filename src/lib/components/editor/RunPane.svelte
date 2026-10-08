@@ -6,6 +6,7 @@
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
   import { Button } from "$lib/components/ui/button/index.js";
+  import { paneBar } from "$lib/components/kit";
   import EraserIcon from "@lucide/svelte/icons/eraser";
   import PlayIcon from "@lucide/svelte/icons/play";
   import RotateCwIcon from "@lucide/svelte/icons/rotate-cw";
@@ -90,7 +91,7 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col text-xs">
-  <div class="border-border flex items-center gap-1 border-b px-2 py-1">
+  <div class={paneBar}>
     {#if cur}
       <span
         class="size-1.5 shrink-0 rounded-full {cur.state === 'running'

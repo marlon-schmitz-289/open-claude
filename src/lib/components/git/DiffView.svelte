@@ -51,7 +51,7 @@
     selected[key] = [...cur];
   }
 
-  const bg = { add: "bg-emerald-500/10", del: "bg-red-500/10", ctx: "", meta: "text-muted-foreground italic" };
+  const bg = { add: "bg-success/10", del: "bg-destructive/10", ctx: "", meta: "text-muted-foreground italic" };
   const sign = { add: "+", del: "-", ctx: " ", meta: "" };
 </script>
 

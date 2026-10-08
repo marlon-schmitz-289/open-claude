@@ -1,6 +1,6 @@
 <script lang="ts">
   import Notice from "$lib/components/Notice.svelte";
-  import { ContextItem, ConfirmDialog, PromptDialog, menuContent } from "$lib/components/kit";
+  import { ContextItem, ConfirmDialog, DiffDialog, PromptDialog, fileIcon, menuContent } from "$lib/components/kit";
   import { age, cn } from "$lib/utils";
   import { tick, untrack } from "svelte";
   import { ContextMenu } from "bits-ui";
@@ -8,8 +8,8 @@
   import { Badge } from "$lib/components/ui/badge/index.js";
   import { git, type Commit, type CommitDetail, type ResetMode } from "$lib/git";
   import { layout, type Row } from "$lib/graph";
-  import { parseDiff } from "$lib/diff";
-  import DiffView from "$lib/components/git/DiffView.svelte";
+  import { fileDiff, parseDiff, stat, type FileStatus } from "$lib/diff";
+  import { dirname } from "$lib/tree";
   import { ask } from "$lib/ask.svelte";
   import { theme } from "$lib/theme.svelte";
   import Splitter, { stored } from "$lib/components/Splitter.svelte";
@@ -49,6 +49,9 @@
   let detail = $state<CommitDetail | null>(null);
   let detailLoading = $state(false);
   let detailError = $state("");
+  /** Index der Datei im Diff-Dialog; null = zu. full = Body ganz zeigen. */
+  let shown = $state<number | null>(null);
+  let full = $state(false);
 
   // gen verwirft Seiten, die ein reload() ueberholt hat; pending teilt den laufenden Request.
   let gen = 0;
@@ -130,6 +133,8 @@
   }
 
   async function select(sha: string) {
+    shown = null;
+    full = false;
     selected = sha;
     detail = null;
     detailError = "";
@@ -184,6 +189,10 @@
   });
 
   const files = $derived(detail ? parseDiff(detail.diff) : []);
+  const stats = $derived(files.map(stat));
+  const total = $derived(stats.reduce((t, s) => ({ a: t.a + s.a, d: t.d + s.d }), { a: 0, d: 0 }));
+  const cur = $derived(shown === null ? null : (files[shown] ?? null));
+  const base = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 
   function refBadges(refs: string[]) {
     return refs.map((r) => {
@@ -195,12 +204,13 @@
     });
   }
 
-  const STATUS_LABEL: Record<string, string> = {
-    modified: "M",
-    added: "A",
-    deleted: "D",
-    renamed: "R",
-    copied: "C",
+  // Kuerzel und Farbe wie im ChangesPanel
+  const STATUS: Record<FileStatus, [string, string]> = {
+    modified: ["M", "text-warning"],
+    added: ["A", "text-success"],
+    deleted: ["D", "text-destructive"],
+    renamed: ["R", "text-info"],
+    copied: ["C", "text-info"],
   };
 
   async function run(label: string, action: () => Promise<unknown>) {
@@ -414,43 +424,63 @@
     {:else if detailError}
       <p class="text-destructive px-2 py-2 text-[11px]">{detailError}</p>
     {:else if detail}
-      <div class="border-border space-y-1 border-b px-2 py-2">
-        <div class="flex items-center gap-2">
-          <span class="font-mono text-[11px] font-semibold">{detail.commit.sha.slice(0, 10)}</span>
-          <button
-            class="text-muted-foreground hover:text-foreground"
-            onclick={() => copySha(detail!.commit.sha)}
-            title="SHA kopieren"
+      <div class="space-y-1 px-3 pt-2 pb-1.5">
+        <p class="truncate text-xs font-medium" title={detail.commit.subject}>{detail.commit.subject}</p>
+        <div class="text-muted-foreground flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px]">
+          <button class="hover:text-foreground flex items-center gap-1 font-mono" title="SHA kopieren" onclick={() => copySha(detail!.commit.sha)}
+            >{detail.commit.sha.slice(0, 8)}<CopyIcon class="size-2.5" /></button
           >
-            <CopyIcon class="size-3" />
-          </button>
-        </div>
-        <p class="whitespace-pre-wrap text-[11px]">{detail.commit.subject}</p>
-        {#if detail.body}<p class="text-muted-foreground whitespace-pre-wrap text-[11px]">{detail.body}</p>{/if}
-        <p class="text-muted-foreground text-[10px]">
-          {detail.commit.author} &lt;{detail.commit.email}&gt; · {new Date(detail.commit.date).toLocaleString("de-DE")}
-        </p>
-        {#if detail.commit.parents.length}
-          <p class="text-muted-foreground font-mono text-[10px]">
-            Eltern:
+          <span>·</span><span title={detail.commit.email}>{detail.commit.author}</span>
+          <span>·</span><span title={new Date(detail.commit.date).toLocaleString("de-DE")}>{age(detail.commit.date)}</span>
+          {#if detail.commit.parents.length}
+            <span>·</span><span>Eltern</span>
             {#each detail.commit.parents as p (p)}
-              <button class="hover:text-primary underline-offset-2 hover:underline" onclick={() => select(p)}>{p.slice(0, 8)}</button
-              >{" "}
+              <button class="hover:text-primary font-mono underline-offset-2 hover:underline" onclick={() => select(p)}>{p.slice(0, 8)}</button>
             {/each}
-          </p>
-        {/if}
-        {#if files.length}
-          <ul class="font-mono text-[10px]">
-            {#each files as f (f.newPath + f.oldPath)}
-              <li class="text-muted-foreground truncate">
-                <span class="text-primary">{STATUS_LABEL[f.status]}</span>
-                {f.status === "renamed" ? `${f.oldPath} -> ${f.newPath}` : f.newPath}
-              </li>
-            {/each}
-          </ul>
+          {/if}
+          <span class="ml-auto font-mono tabular-nums">
+            {files.length}
+            {files.length === 1 ? "Datei" : "Dateien"}
+            {#if total.a}<span class="text-success">+{total.a}</span>{/if}
+            {#if total.d}<span class="text-destructive">−{total.d}</span>{/if}
+          </span>
+        </div>
+        {#if detail.body}
+          <button
+            class="text-muted-foreground hover:text-foreground w-full text-left text-[11px] whitespace-pre-wrap {full ? 'block' : 'line-clamp-2'}"
+            title={full ? "Weniger" : "Ganz anzeigen"}
+            onclick={() => (full = !full)}>{detail.body}</button
+          >
         {/if}
       </div>
-      <DiffView diff={detail.diff} />
+      {#if files.length}
+        <div class="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-1.5 px-3 pb-3">
+          {#each files as f, i (i)}
+            {@const st = stats[i]}
+            {@const ic = fileIcon(f.newPath)}
+            {@const [label, tone] = STATUS[f.status]}
+            <button
+              class="bg-card border-border/60 hover:bg-accent/60 hover:border-border flex min-w-0 flex-col gap-0.5 rounded-lg border px-2 py-1.5 text-left transition-colors"
+              title={f.oldPath !== f.newPath ? `${f.oldPath} → ${f.newPath}` : f.newPath}
+              onclick={() => (shown = i)}
+            >
+              <span class="flex min-w-0 items-center gap-1.5">
+                <ic.icon class="size-3.5 shrink-0 {ic.tint}" />
+                <span class="min-w-0 flex-1 truncate text-[11px] font-medium">{base(f.newPath)}</span>
+                <span class="shrink-0 font-mono text-[10px] font-semibold {tone}">{label}</span>
+              </span>
+              <span class="flex min-w-0 items-center gap-2 pl-5 text-[10px]">
+                <span class="text-muted-foreground min-w-0 flex-1 truncate">{dirname(f.newPath)}</span>
+                {#if f.binary}<span class="text-muted-foreground shrink-0">binär</span>
+                {:else}<span class="shrink-0 font-mono tabular-nums"
+                    >{#if st.a}<span class="text-success">+{st.a}</span>{/if}
+                    {#if st.d}<span class="text-destructive">−{st.d}</span>{/if}</span
+                  >{/if}
+              </span>
+            </button>
+          {/each}
+        </div>
+      {/if}
     {:else}
       <p class="text-muted-foreground px-2 py-4 text-center text-[11px]">Commit wählen.</p>
     {/if}
@@ -473,3 +503,20 @@
   onsubmit={doPrompt}
   oncancel={() => (prompt = null)}
 />
+
+<DiffDialog
+  diff={cur && fileDiff(cur)}
+  title={cur ? base(cur.newPath) : ""}
+  onclose={() => (shown = null)}
+  step={files.length > 1 ? (d) => (shown = (shown! + d + files.length) % files.length) : undefined}
+>
+  {#if cur && shown !== null}
+    {@const [label, tone] = STATUS[cur.status]}
+    <span class="shrink-0 font-mono text-xs font-semibold {tone}">{label}</span>
+    <span class="shrink-0 font-mono text-xs tabular-nums">
+      {#if stats[shown].a}<span class="text-success">+{stats[shown].a}</span>{/if}
+      {#if stats[shown].d}<span class="text-destructive">−{stats[shown].d}</span>{/if}
+    </span>
+    <span class="text-muted-foreground shrink-0 text-xs font-normal tabular-nums">{shown + 1} / {files.length}</span>
+  {/if}
+</DiffDialog>

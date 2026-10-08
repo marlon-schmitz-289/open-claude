@@ -2,7 +2,7 @@
   // Editor-Ansicht eines Projekts: verdrahtet Dock, Dateibaum und Code-Panels mit dem Store.
   // Haelt selbst keinen Zustand: beim Wechsel zu Terminal/Git wird sie abgebaut, Puffer und Layout liegen in $lib/editor.svelte.
   import Notice from "$lib/components/Notice.svelte";
-  import { Empty } from "$lib/components/kit";
+  import { Empty, fileIcon } from "$lib/components/kit";
   import { Button } from "$lib/components/ui/button/index.js";
   import SaveIcon from "@lucide/svelte/icons/save";
   import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
@@ -12,6 +12,9 @@
   import PlayIcon from "@lucide/svelte/icons/play";
   import RotateCwIcon from "@lucide/svelte/icons/rotate-cw";
   import SquareIcon from "@lucide/svelte/icons/square";
+  import FileCodeIcon from "@lucide/svelte/icons/file-code";
+  import FolderTreeIcon from "@lucide/svelte/icons/folder-tree";
+  import SquareTerminalIcon from "@lucide/svelte/icons/square-terminal";
   import { FILES, PREVIEW, RUN, TESTS, groupOf, panelPath, type PanelId } from "$lib/dock";
   import { closeTab, editor, focus, resetLayout, save, setLayout, setRun, togglePanel, watch } from "$lib/editor.svelte";
   import { chosen, detect, run, runRestart, runStart, runStop } from "$lib/run.svelte";
@@ -45,15 +48,16 @@
   ];
 
   function info(id: PanelId): TabInfo {
-    if (id === FILES) return { title: "Dateien" };
-    if (id === PREVIEW) return { title: "Vorschau" };
-    if (id === TESTS) return { title: "Tests" };
-    if (id === RUN) return { title: "Ausgabe" };
+    if (id === FILES) return { title: "Dateien", icon: FolderTreeIcon };
+    if (id === PREVIEW) return { title: "Vorschau", icon: PanelRightIcon };
+    if (id === TESTS) return { title: "Tests", icon: FlaskConicalIcon };
+    if (id === RUN) return { title: "Ausgabe", icon: SquareTerminalIcon };
     const path = panelPath(id) ?? "";
     const f = s.files[path];
     // Auf der Platte geloescht, Puffer hat noch Aenderungen: der Tab bleibt und sagt es.
     const gone = f?.conflict === "deleted" ? " (gelöscht)" : "";
-    return { title: path.slice(path.lastIndexOf("/") + 1) + gone, hint: path + gone, dirty: f?.dirty };
+    const { icon, tint } = fileIcon(path);
+    return { title: path.slice(path.lastIndexOf("/") + 1) + gone, hint: path + gone, dirty: f?.dirty, icon, tint };
   }
 
   function onKey(e: KeyboardEvent) {
@@ -96,7 +100,9 @@
 {/snippet}
 
 {#snippet empty()}
-  <Empty>Datei im Baum wählen oder mit Strg+P suchen.</Empty>
+  <Empty icon={FileCodeIcon}
+    >Datei im Baum wählen oder <kbd class="border-border/60 bg-secondary rounded border px-1 font-mono text-[10px]">Strg+P</kbd></Empty
+  >
 {/snippet}
 
 {#snippet toggle(id: "files" | "preview" | "tests", label: string, Icon: typeof SaveIcon)}
@@ -104,7 +110,7 @@
   <Button
     variant="ghost"
     size="xs"
-    class={on ? "text-foreground" : "text-muted-foreground"}
+    class={on ? "bg-background text-foreground ring-foreground/10 ring-1 [&_svg]:text-primary" : "text-muted-foreground"}
     aria-pressed={on}
     title="{label} {on ? 'ausblenden' : 'einblenden'}"
     onclick={() => togglePanel(repo, id)}><Icon /> {label}</Button
@@ -123,13 +129,14 @@
     >
     {#if dirty}
       <span class="text-muted-foreground ml-1 flex items-center gap-1.5 text-[11px]" role="status">
-        <span class="bg-foreground size-1.5 rounded-full"></span>
+        <span class="bg-primary size-1.5 rounded-full"></span>
         {dirty} ungespeichert
       </span>
     {/if}
-    <span class="ml-3 flex items-center gap-0.5">
+    <span class="bg-background/60 ring-foreground/10 ml-3 flex items-center gap-0.5 rounded-md p-0.5 ring-1">
+      {#if running}<span class="bg-success mx-1 size-1.5 animate-pulse rounded-full" title="Läuft"></span>{/if}
       <select
-        class="border-input dark:bg-input/30 h-6 max-w-60 min-w-0 rounded-md border bg-transparent px-1.5 font-mono text-[11px] outline-none focus-visible:ring-ring/50 focus-visible:ring-2 disabled:opacity-50"
+        class="hover:bg-accent/50 h-5 max-w-60 min-w-0 rounded border-0 bg-transparent px-1.5 font-mono text-[11px] outline-none focus-visible:ring-ring/50 focus-visible:ring-2 disabled:opacity-50"
         value={cfg?.label ?? ""}
         disabled={!r.configs.length}
         aria-label="Startziel"
@@ -149,7 +156,7 @@
       <Button
         variant="ghost"
         size="icon-xs"
-        class="text-muted-foreground"
+        class={cfg && !running ? "text-success hover:text-success" : "text-muted-foreground"}
         disabled={!cfg || running}
         title={cfg ? `${cfg.label} starten (F5) – führt Code aus dem Projekt aus` : "Nichts zum Starten"}
         onclick={() => runStart(repo, cfg ?? undefined)}><PlayIcon /></Button
@@ -157,7 +164,7 @@
       <Button
         variant="ghost"
         size="icon-xs"
-        class="text-muted-foreground"
+        class={running ? "text-destructive hover:text-destructive" : "text-muted-foreground"}
         disabled={!running}
         title="Stoppen (Umschalt+F5)"
         onclick={() => runStop(repo)}><SquareIcon /></Button
@@ -177,14 +184,15 @@
     {@render toggle("preview", "Vorschau", PanelRightIcon)}
     <Button
       variant="ghost"
-      size="xs"
+      size="icon-xs"
       class="text-muted-foreground"
-      title="Dateien links, Editor in der Mitte; offene Dateien bleiben, ein laufender Prozess stoppt"
-      onclick={() => resetLayout(repo)}><RotateCcwIcon /> Layout zurücksetzen</Button
+      aria-label="Layout zurücksetzen"
+      title="Layout zurücksetzen: Dateien links, Editor in der Mitte; offene Dateien bleiben, ein laufender Prozess stoppt"
+      onclick={() => resetLayout(repo)}><RotateCcwIcon /></Button
     >
   </div>
   <Notice bind:text={() => s.error, (v) => (s.error = v)} />
-  <div class="min-h-0 flex-1">
+  <div class="min-h-0 flex-1 p-1">
     <Dock
       layout={s.layout}
       onlayout={(l) => setLayout(repo, l)}

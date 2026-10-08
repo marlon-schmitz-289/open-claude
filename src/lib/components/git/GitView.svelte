@@ -1,10 +1,9 @@
 <script lang="ts">
   import { confirm as ask } from "$lib/confirm.svelte";
   import Notice from "$lib/components/Notice.svelte";
-  import { ConfirmDialog, PromptDialog, Tabs, menuContent, menuItem, menuSeparator } from "$lib/components/kit";
+  import { ConfirmDialog, DiffDialog, PromptDialog, Tabs, menuContent, menuItem, menuSeparator } from "$lib/components/kit";
   import { tick, untrack } from "svelte";
   import { DropdownMenu } from "bits-ui";
-  import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { git, forge, accountId, type Account, type ForgeKind, type RepoAccount, type Status } from "$lib/git";
   import Sidebar from "./Sidebar.svelte";
@@ -17,7 +16,6 @@
   import SkillsPanel from "$lib/components/skills/SkillsPanel.svelte";
   import type { SkillStore, ProjectSkills } from "$lib/skills";
   import MergeEditor from "./MergeEditor.svelte";
-  import DiffView from "./DiffView.svelte";
   import Splitter, { stored } from "$lib/components/Splitter.svelte";
   import GitBranchIcon from "@lucide/svelte/icons/git-branch";
   import GitBranchPlusIcon from "@lucide/svelte/icons/git-branch-plus";
@@ -448,16 +446,7 @@
 
 <AskDialog />
 
-<Dialog.Root open={shown !== null} onOpenChange={(o) => !o && (shown = null)}>
-  <Dialog.Content class="flex h-[80vh] flex-col sm:max-w-4xl">
-    <Dialog.Header>
-      <Dialog.Title>{shown?.title}</Dialog.Title>
-    </Dialog.Header>
-    <div class="border-border min-h-0 flex-1 rounded border">
-      <DiffView diff={shown?.diff ?? ""} />
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
+<DiffDialog diff={shown?.diff ?? null} title={shown?.title ?? ""} onclose={() => (shown = null)} />
 
 <ConfirmDialog
   open={confirm !== null}
