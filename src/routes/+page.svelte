@@ -628,10 +628,10 @@
     const { repo } = doomed;
     trashing = true;
     try {
-      // Laufende Sitzung und Dev-Server zuerst beenden, unter Windows sperrt ihr cwd sonst den Ordner.
+      // Laufende Sitzung und Run-Prozess zuerst beenden, unter Windows sperrt ihr cwd sonst den Ordner.
       sessions = sessions.filter((s) => s.repo.path !== repo.path);
       await tick();
-      await devStop(repo.path);
+      await runStop(repo.path);
       await invoke("trash_repo", { path: repo.path, root });
       // Der Dialog hat das Loeschen schon bestaetigt: Puffer des Projekts ohne zweite Frage verwerfen.
       drop(repo.path, true);
@@ -650,8 +650,8 @@
     if (gitRepo && gitView && !gitView.canLeave()) return;
     // Zurueck zur Liste schliesst den Editor des Projekts: bei ungespeicherten Aenderungen fragt drop nach.
     if (editRepo && !drop(editRepo.path)) return;
-    // Aus Terminal oder Git heraus bleibt der Editor-Zustand, aber kein Dev-Server ohne sichtbaren Stopp-Knopf.
-    if (viewRepo) void devStop(viewRepo.path);
+    // Aus Terminal oder Git heraus bleibt der Editor-Zustand, aber kein Prozess ohne sichtbaren Stopp-Knopf.
+    if (viewRepo) void runStop(viewRepo.path);
     editRepo = null;
     active = null;
     leaveGit();

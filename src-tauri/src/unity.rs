@@ -124,18 +124,10 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// PIDs laufender CLI-Aufrufe, damit beim App-Ende kein Batch-Unity verwaist weiterlaeuft.
 static RUNNING: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
-/// Die CLI startet Unity in ihrer Prozessgruppe; nur die CLI zu beenden liesse Unity weiterlaufen.
-fn kill_tree(pid: u32) {
-    #[cfg(unix)]
-    let _ = std::process::Command::new("kill").args(["-TERM", "--", &format!("-{pid}")]).status();
-    #[cfg(windows)]
-    let _ = crate::quiet("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).status();
-}
-
 /// Beim App-Ende: laufende Testlaeufe samt Unity beenden.
 pub(crate) fn kill_all() {
     for pid in lock(&RUNNING).drain(..) {
-        kill_tree(pid);
+        crate::kill_tree(pid);
     }
 }
 
@@ -147,7 +139,7 @@ fn unity(cli: &str, dir: &Path, args: &[&str], limit: Duration) -> Result<Output
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // Eigene Gruppe: kill_tree trifft so die CLI und den von ihr gestarteten Unity-Prozess, nicht uns.
+    // Eigene Gruppe: crate::kill_tree trifft so die CLI und den von ihr gestarteten Unity-Prozess, nicht uns.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
     let child = cmd.spawn().map_err(|e| format!("Unity-CLI konnte nicht gestartet werden: {e}"))?;
@@ -157,7 +149,7 @@ fn unity(cli: &str, dir: &Path, args: &[&str], limit: Duration) -> Result<Output
     std::thread::spawn(move || tx.send(child.wait_with_output()));
     let res = rx.recv_timeout(limit);
     if res.is_err() {
-        kill_tree(pid);
+        crate::kill_tree(pid);
     }
     lock(&RUNNING).retain(|p| *p != pid);
     match res {

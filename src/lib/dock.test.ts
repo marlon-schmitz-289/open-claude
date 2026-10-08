@@ -287,6 +287,12 @@ test("parse: gueltiges kommt normalisiert und ohne fremde Felder zurueck", () =>
   assert.deepEqual(tabs(p), ["g1 files", "g2"]);
   assert.deepEqual(p.sizes, [0.22, 0.78]);
   assert.ok(!("fremd" in p) && !("fremd" in p.children[0]));
+  // Test-Explorer als Tab neben dem Dateibaum.
+  const t = openPanel(defaultLayout(), "tests", "g1");
+  assert.deepEqual(tabs(parse(JSON.stringify(t))), ["g1 files tests", "g2"]);
+  // Ausgabe der Run-Leiste unter dem Editor.
+  const r = splitAt(defaultLayout(), "run", "g2", "bottom");
+  assert.deepEqual(tabs(parse(JSON.stringify(r))), ["g1 files", "g2", "g3 run"]);
 });
 
 test("keine Funktion veraendert ihre Eingabe", () => {

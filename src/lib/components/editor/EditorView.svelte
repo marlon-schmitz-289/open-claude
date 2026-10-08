@@ -7,13 +7,21 @@
   import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
   import PanelRightIcon from "@lucide/svelte/icons/panel-right";
   import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
-  import { FILES, PREVIEW, groupOf, panelPath, type PanelId } from "$lib/dock";
-  import { closeTab, editor, focus, resetLayout, save, setLayout, togglePanel, watch } from "$lib/editor.svelte";
+  import FlaskConicalIcon from "@lucide/svelte/icons/flask-conical";
+  import PlayIcon from "@lucide/svelte/icons/play";
+  import RotateCwIcon from "@lucide/svelte/icons/rotate-cw";
+  import SquareIcon from "@lucide/svelte/icons/square";
+  import { FILES, PREVIEW, RUN, TESTS, groupOf, panelPath, type PanelId } from "$lib/dock";
+  import { closeTab, editor, focus, resetLayout, save, setLayout, setRun, togglePanel, watch } from "$lib/editor.svelte";
+  import { chosen, detect, run, runRestart, runStart, runStop } from "$lib/run.svelte";
+  import type { RunConfig } from "$lib/run.logic";
   import Dock, { type TabInfo } from "./Dock.svelte";
   import FileTree from "./FileTree.svelte";
   import CodePane from "./CodePane.svelte";
   import QuickOpen from "./QuickOpen.svelte";
   import PreviewPane from "./PreviewPane.svelte";
+  import TestPane from "./TestPane.svelte";
+  import RunPane from "./RunPane.svelte";
 
   let { repo }: { repo: string } = $props();
 
@@ -24,9 +32,22 @@
   // Aenderungen von aussen (claude im Terminal) nur verfolgen, solange die Ansicht sichtbar ist.
   $effect(() => watch(repo));
 
+  // Run-Leiste: Ziele einmal je Sitzung erkennen (liest nur). Gestartet wird allein per Klick oder F5.
+  $effect(() => void detect(repo));
+  const r = $derived(run(repo));
+  const cfg = $derived(chosen(repo));
+  const running = $derived(r.current?.state === "running");
+  const kinds: [RunConfig["target"]["kind"], string][] = [
+    ["npm", "npm-Scripts"],
+    ["dotnet", ".NET"],
+    ["cargo", "Cargo"],
+  ];
+
   function info(id: PanelId): TabInfo {
     if (id === FILES) return { title: "Dateien" };
     if (id === PREVIEW) return { title: "Vorschau" };
+    if (id === TESTS) return { title: "Tests" };
+    if (id === RUN) return { title: "Ausgabe" };
     const path = panelPath(id) ?? "";
     const f = s.files[path];
     // Auf der Platte geloescht, Puffer hat noch Aenderungen: der Tab bleibt und sagt es.
@@ -35,6 +56,14 @@
   }
 
   function onKey(e: KeyboardEvent) {
+    // Wie VS Code: F5 startet, Umschalt+F5 stoppt, Strg+Umschalt+F5 startet neu. Sonst laedt die WebView die Seite neu.
+    if (e.key === "F5" && !e.altKey) {
+      e.preventDefault();
+      if (e.shiftKey && (e.ctrlKey || e.metaKey)) void runRestart(repo);
+      else if (e.shiftKey) void runStop(repo);
+      else if (!e.ctrlKey && !e.metaKey) void runStart(repo);
+      return;
+    }
     // CodeMirror speichert die eigene Datei selbst (Mod-s) und setzt dann defaultPrevented.
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
     const key = e.key.toLowerCase();
@@ -56,6 +85,10 @@
     <FileTree {repo} />
   {:else if id === PREVIEW}
     <PreviewPane {repo} />
+  {:else if id === TESTS}
+    <TestPane {repo} />
+  {:else if id === RUN}
+    <RunPane {repo} />
   {:else}
     <CodePane {repo} path={panelPath(id) ?? ""} />
   {/if}
@@ -67,7 +100,7 @@
   </div>
 {/snippet}
 
-{#snippet toggle(id: "files" | "preview", label: string, Icon: typeof SaveIcon)}
+{#snippet toggle(id: "files" | "preview" | "tests", label: string, Icon: typeof SaveIcon)}
   {@const on = !!groupOf(s.layout, id)}
   <Button
     variant="ghost"
@@ -95,14 +128,59 @@
         {dirty} ungespeichert
       </span>
     {/if}
+    <span class="ml-3 flex items-center gap-0.5">
+      <select
+        class="border-input dark:bg-input/30 h-6 max-w-60 min-w-0 rounded-md border bg-transparent px-1.5 font-mono text-[11px] outline-none focus-visible:ring-ring/50 focus-visible:ring-2 disabled:opacity-50"
+        value={cfg?.label ?? ""}
+        disabled={!r.configs.length}
+        aria-label="Startziel"
+        title="Startziel (F5 startet)"
+        onchange={(e) => setRun(repo, e.currentTarget.value)}
+      >
+        {#if !r.configs.length}<option value="">Nichts zum Starten</option>{/if}
+        {#each kinds as [kind, label] (kind)}
+          {@const list = r.configs.filter((c) => c.target.kind === kind)}
+          {#if list.length}
+            <optgroup {label} class="bg-popover">
+              {#each list as c (c.label)}<option value={c.label} class="bg-popover text-popover-foreground">{c.label}</option>{/each}
+            </optgroup>
+          {/if}
+        {/each}
+      </select>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        class="text-muted-foreground"
+        disabled={!cfg || running}
+        title={cfg ? `${cfg.label} starten (F5) – führt Code aus dem Projekt aus` : "Nichts zum Starten"}
+        onclick={() => runStart(repo, cfg ?? undefined)}><PlayIcon /></Button
+      >
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        class="text-muted-foreground"
+        disabled={!running}
+        title="Stoppen (Umschalt+F5)"
+        onclick={() => runStop(repo)}><SquareIcon /></Button
+      >
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        class="text-muted-foreground"
+        disabled={!r.current}
+        title="Neu starten (Strg+Umschalt+F5)"
+        onclick={() => runRestart(repo)}><RotateCwIcon /></Button
+      >
+    </span>
     <span class="flex-1"></span>
     {@render toggle("files", "Dateien", PanelLeftIcon)}
+    {@render toggle("tests", "Tests", FlaskConicalIcon)}
     {@render toggle("preview", "Vorschau", PanelRightIcon)}
     <Button
       variant="ghost"
       size="xs"
       class="text-muted-foreground"
-      title="Dateien links, Editor in der Mitte; offene Dateien bleiben"
+      title="Dateien links, Editor in der Mitte; offene Dateien bleiben, ein laufender Prozess stoppt"
       onclick={() => resetLayout(repo)}><RotateCcwIcon /> Layout zurücksetzen</Button
     >
   </div>

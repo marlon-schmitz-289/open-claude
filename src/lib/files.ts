@@ -1,6 +1,8 @@
 // Vertrag zwischen Frontend und src-tauri/src/files.rs + preview.rs.
 // Alle Pfade sind relativ zum Repo, mit "/" getrennt; "" = Projektordner.
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { Channel, invoke, convertFileSrc } from "@tauri-apps/api/core";
+import type { Fw } from "./testing.logic.ts";
+import type { Target } from "./run.logic.ts";
 
 export type Entry = {
   name: string;
@@ -62,13 +64,35 @@ export const xamlRender = (repo: string, path: string, content: string) =>
   call<string>("xaml_render", { repo, path, content });
 
 /**
- * Dev-Server starten: `<pm> run <script>` in dir ("" = Projektordner) in einem PTY. Rust laesst nur npm/pnpm/yarn/bun
- * und dev/start/serve zu. Output kommt als Event "pty:<id>" (Bytes), das Ende als "pty-exit:<id>"; ptyClose stoppt.
+ * Startziel der Run-Leiste in dir ("" = Projektordner) in einem PTY starten. Rust laesst nur feste Kommandos und
+ * gepruefte Namen zu. Output kommt als Event "pty:<id>" (Bytes), das Ende als "pty-exit:<id>" (Exit-Code oder null);
+ * ptyClose stoppt. Fuehrt Code aus dem Projekt aus: NUR auf Klick oder Taste.
  */
-export const devStart = (id: string, repo: string, dir: string, pm: string, script: string) =>
-  call<void>("dev_start", { id, repo, dir, pm, script });
+export const runStart = (id: string, repo: string, dir: string, target: Target) =>
+  call<void>("run_start", { id, repo, dir, target });
 export const ptyClose = (id: string) => call<void>("pty_close", { id });
 export const ptyWrite = (id: string, data: string) => call<void>("pty_write", { id, data });
+export const ptyResize = (id: string, cols: number, rows: number) => call<void>("pty_resize", { id, cols, rows });
+
+/** Was ein Testlauf ausfuehrt; Dateien relativ zum Projektordner (dir). Spiegel von runner::Scope. */
+export type TestScope =
+  | { kind: "all"; files: string[] }
+  | { kind: "file"; file: string; keys: string[] }
+  | { kind: "test"; file: string; key: string; suite: boolean };
+/** Spiegel von runner::Msg: Output-Zeilen (stdout + stderr, gebuendelt) und zuletzt das Ende. */
+export type TestMsg = { event: "lines"; data: { lines: string[] } } | { event: "exit"; data: { code: number | null } };
+
+/**
+ * Testlauf in dir ("" = Projektordner) starten; kehrt nach dem Start zurueck, Output und Ende kommen ueber on.
+ * Fuehrt Code aus dem Projekt aus: NUR auf Klick. Fehler beim Start (Tool fehlt) als abgelehntes Promise.
+ */
+export function testRun(id: string, repo: string, dir: string, fw: Fw, scope: TestScope, on: (m: TestMsg) => void) {
+  const ch = new Channel<TestMsg>();
+  ch.onmessage = on;
+  return call<void>("test_run", { id, repo, dir, fw, scope, on: ch });
+}
+/** Lauf samt Kindprozessen abbrechen; Exit kommt danach noch ueber den Channel. */
+export const testCancel = (id: string) => call<void>("test_cancel", { id });
 
 /** Ungespeicherte Aenderungen melden: Rust fragt dann vor dem Beenden (Fenster schliessen, Tray "Beenden"). */
 export const editorDirty = (dirty: boolean) => call<void>("editor_dirty", { dirty });

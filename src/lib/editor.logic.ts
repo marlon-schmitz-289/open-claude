@@ -71,16 +71,6 @@ export function serverUrl(text: string, localOnly = false): string | null {
   return `${m[1]}://${host}${m[3] ?? ""}${m[4]?.replace(/[.,;:]+$/, "") || "/"}`;
 }
 
-/** Script aus package.json, das den Dev-Server startet; null = keins (oder kaputtes JSON). Rust laesst nur diese zu. */
-export function devScript(pkg: string): string | null {
-  try {
-    const s = JSON.parse(pkg)?.scripts ?? {};
-    return ["dev", "start", "serve"].find((n) => typeof s[n] === "string" && s[n].trim()) ?? null;
-  } catch {
-    return null;
-  }
-}
-
 const LOCKS = [
   ["pnpm-lock.yaml", "pnpm"],
   ["yarn.lock", "yarn"],
@@ -106,3 +96,6 @@ export function ancestors(path: string): string[] {
   const p = path.split("/").slice(0, -1);
   return [...p.map((_, i) => p.slice(0, p.length - i).join("/")), ""];
 }
+
+/** Zu gross fuer Highlighting: ueber 1 MB oder eine Zeile ab 10 000 Zeichen (minifiziert); beides macht den Parser zaeh. */
+export const huge = (text: string) => text.length > 1_000_000 || /[^\n]{10000}/.test(text);

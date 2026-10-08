@@ -1,13 +1,14 @@
 // Zustand des eingebauten Editors je Projekt. Lebt auf Modulebene, nicht in Komponenten: Panels werden beim
 // Andocken neu gemountet und die Editor-Ansicht beim Wechsel zu Terminal/Git abgebaut, Puffer bleiben trotzdem.
-// Gespeichert (localStorage "editor:<repo>", JSON, try/catch): layout, active, expanded, pin, url, wpf.
+// Gespeichert (localStorage "editor:<repo>", JSON, try/catch): layout, active, expanded, pin, url, wpf, run.
 // Ungespeicherte Inhalte ueberleben keinen Neustart der App.
 import { untrack } from "svelte";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { EditorState, StateEffect } from "@codemirror/state";
 import {
   FILES,
   PREVIEW,
+  RUN,
+  TESTS,
   activate,
   closePanel,
   defaultLayout,
@@ -23,8 +24,10 @@ import {
   type Layout,
   type PanelId,
 } from "./dock.ts";
-import { KONFLIKT, devStart as startServer, fs, isBinaryImage, previewAllow, ptyClose, ptyWrite } from "./files.ts";
-import { LOCKFILES, ancestors, devScript, moved, packageManager, plain, serverUrl, under, verdict } from "./editor.logic.ts";
+import { KONFLIKT, fs, isBinaryImage, previewAllow } from "./files.ts";
+import { moved, under, verdict } from "./editor.logic.ts";
+import { runStop } from "./run.svelte.ts";
+import { rescan } from "./testing.svelte.ts";
 
 /** Platte weicht vom Puffer ab, waehrend lokale Aenderungen offen sind. */
 export type Conflict = "changed" | "deleted";
@@ -61,17 +64,16 @@ export type RepoEditor = {
   url: string;
   /** WPF-Vorschau fuer dieses Projekt erlaubt: XAML laden kann Code ausfuehren, darum erst nach Rueckfrage. */
   wpf: boolean;
-  /**
-   * Dev-Server des Projekts (hoechstens einer). Nie gespeichert: er startet nur auf Klick, nie beim Oeffnen.
-   * url = aus dem Output erkannte Adresse ("" = noch keine), log = roher Output (letzte 64 KB), cmd = fuer die Anzeige.
-   */
-  dev: { state: "idle" | "running" | "exited"; url: string; log: string; cmd: string };
+  /** Zuletzt gewaehltes Startziel der Run-Leiste (RunConfig.label); null = Vorauswahl. */
+  run: string | null;
   /** Aufgeklappte Ordner im Baum. */
   expanded: string[];
   /** mtime der beobachteten Ordner ("" = Projektordner + expanded). Aendert sich ein Wert, liest der Baum den Ordner neu. */
   dirs: Record<string, number | null>;
   /** Letzter Fehler (Oeffnen, Speichern) fuer die Anzeige in EditorView; "" = keiner. */
   error: string;
+  /** Zeile, die CodePane anspringen soll (Stack-Link, Testdetails); setzt es danach zurueck. */
+  reveal: { path: string; line: number } | null;
 };
 
 // Bewusst eine Map mit je einem eigenen $state-Objekt statt eines $state-Records: editor() wird auch aus
@@ -96,8 +98,8 @@ const NEVER = "\0";
 
 function persist(s: RepoEditor) {
   try {
-    const { layout, active, expanded, pin, url, wpf } = s;
-    localStorage.setItem(`editor:${s.repo}`, JSON.stringify({ layout, active, expanded, pin, url, wpf }));
+    const { layout, active, expanded, pin, url, wpf, run } = s;
+    localStorage.setItem(`editor:${s.repo}`, JSON.stringify({ layout, active, expanded, pin, url, wpf, run }));
   } catch {
     // Ohne localStorage gilt das Layout nur fuer diese Sitzung.
   }
@@ -178,10 +180,11 @@ export function editor(repo: string): RepoEditor {
     pin: str(p.pin),
     url: str(p.url) ?? "",
     wpf: p.wpf === true,
-    dev: { state: "idle", url: "", log: "", cmd: "" },
+    run: str(p.run),
     expanded: Array.isArray(p.expanded) ? p.expanded.filter((d) => typeof d === "string") : [],
     dirs: {},
     error: "",
+    reveal: null,
   });
   store.set(repo, s);
   // Nicht synchron: editor() laeuft auch in $derived.
@@ -196,13 +199,14 @@ export function editor(repo: string): RepoEditor {
 }
 
 /**
- * Datei als Tab zeigen (laedt sie beim ersten Mal) und zur aktiven machen. Binaere Bilder (files.isBinaryImage)
+ * Datei als Tab zeigen (laedt sie beim ersten Mal) und zur aktiven machen; line = dorthin springen. Binaere Bilder (files.isBinaryImage)
  * bekommen keinen Tab: sie werden an die Vorschau geheftet und die Vorschau geoeffnet. Fehler landen in error.
  * Neue Tabs kommen in die Gruppe der aktiven Datei, sonst in die main-Gruppe (nie zu Baum oder Vorschau).
  */
-export async function open(repo: string, path: string): Promise<void> {
+export async function open(repo: string, path: string, line?: number): Promise<void> {
   const s = editor(repo);
   s.error = "";
+  if (line !== undefined) s.reveal = { path, line };
   if (isBinaryImage(path)) {
     s.pin = path;
     // Eine Dev-Server-URL haette Vorrang und verdeckte das Bild.
@@ -234,15 +238,15 @@ export function close(repo: string, path: string, force = false): boolean {
   return true;
 }
 
-/** Beliebiges Panel schliessen (Docks onclose): Dateien ueber close(), "files"/"preview" direkt. false = abgebrochen. */
+/** Beliebiges Panel schliessen (Docks onclose): Dateien ueber close(), die anderen direkt. false = abgebrochen. */
 export function closeTab(repo: string, panel: PanelId): boolean {
   const path = panelPath(panel);
   if (path !== null) return close(repo, path);
   const s = editor(repo);
   s.layout = closePanel(s.layout, panel);
   persist(s);
-  // Ohne Vorschau gaebe es keinen sichtbaren Stopp-Knopf mehr.
-  if (panel === PREVIEW) void devStop(repo);
+  // Laeuft etwas, ist die Ausgabe im Layout: ohne sie gaebe es keinen Stopp-Knopf mehr.
+  if (panel === RUN) void runStop(repo);
   return true;
 }
 
@@ -256,6 +260,7 @@ export async function save(repo: string, path?: string, force = false): Promise<
   const p = path ?? s.active;
   const f = p === null ? undefined : s.files[p];
   if (p === null || !f) return false;
+  flush(repo, p);
   const text = f.text;
   const key = snapKey(repo, p);
   if (saving.has(key)) return false;
@@ -267,6 +272,8 @@ export async function save(repo: string, path?: string, force = false): Promise<
     f.dirty = f.text !== text;
     f.conflict = null;
     s.error = "";
+    // Test-Explorer: Tests der Datei neu einlesen (nur wenn er schon gesucht hat).
+    void rescan(repo, [p]);
     return true;
   } catch (e) {
     if (String(e) === KONFLIKT) {
@@ -314,15 +321,55 @@ export async function keep(repo: string, path: string): Promise<void> {
 
 /** "Vergleichen": Unified Diff Platte -> Puffer fuer DiffView. */
 export function diff(repo: string, path: string): Promise<string> {
+  flush(repo, path);
   return fs.diff(repo, path, editor(repo).files[path]?.text ?? "");
 }
 
-/** Von CodePane bei jeder Aenderung: setzt text und dirty. */
+/** Setzt text und dirty. */
 export function setText(repo: string, path: string, text: string): void {
   const f = editor(repo).files[path];
   if (!f) return;
   f.text = text;
-  f.dirty = text !== f.saved;
+  // Laenge zuerst: beim Tippen unterscheidet sie sich fast immer, der volle Vergleich entfaellt.
+  f.dirty = text.length !== f.saved.length || text !== f.saved;
+}
+
+/** Zeilenumbruch (Alt+Z), global fuer alle Projekte; localStorage "editor:wrap". */
+export const prefs = $state({ wrap: false });
+try {
+  prefs.wrap = localStorage.getItem("editor:wrap") === "1";
+} catch {
+  // Ohne localStorage: kein Umbruch.
+}
+
+export function toggleWrap(): void {
+  prefs.wrap = !prefs.wrap;
+  try {
+    localStorage.setItem("editor:wrap", prefs.wrap ? "1" : "0");
+  } catch {
+    // Gilt dann nur fuer diese Sitzung.
+  }
+}
+
+/** Ausstehende Texte aus CodePane: toString ist O(Datei), darum hoechstens einmal pro Frame. */
+const pending = new Map<string, () => string>();
+
+/** Von CodePane bei jeder Aenderung: dirty sofort, text im naechsten Frame (oder frueher ueber flush). */
+export function edited(repo: string, path: string, read: () => string): void {
+  const f = peek(repo)?.files[path];
+  if (!f) return;
+  f.dirty = true;
+  const key = snapKey(repo, path);
+  if (!pending.has(key)) requestAnimationFrame(() => flush(repo, path));
+  pending.set(key, read);
+}
+
+/** Ausstehenden Text sofort uebernehmen; vor allem, was f.text liest und nicht warten darf (save, diff). */
+export function flush(repo: string, path: string): void {
+  const key = snapKey(repo, path);
+  const read = pending.get(key);
+  pending.delete(key);
+  if (read && peek(repo)?.files[path]) setText(repo, path, read());
 }
 
 /** Layout setzen und speichern (Docks onlayout). */
@@ -342,14 +389,19 @@ export function focus(repo: string, panel: PanelId): void {
   persist(s);
 }
 
-/** "files" bzw. "preview" ein-/ausblenden. Neu: files an die linke, preview an die rechte Kante des Layouts. */
-export function togglePanel(repo: string, panel: "files" | "preview"): void {
+/**
+ * "files", "preview" bzw. "tests" ein-/ausblenden. Neu: files an die linke, preview an die rechte Kante des Layouts,
+ * tests als Tab neben files (wie die Seitenleiste in VS Code), ohne files an die linke Kante.
+ */
+export function togglePanel(repo: string, panel: "files" | "preview" | "tests"): void {
   const s = editor(repo);
+  const files = groupOf(s.layout, FILES)?.id;
   s.layout = groupOf(s.layout, panel)
     ? closePanel(s.layout, panel)
-    : splitAt(s.layout, panel, null, panel === FILES ? "left" : "right");
+    : panel === TESTS && files
+      ? openPanel(s.layout, panel, files)
+      : splitAt(s.layout, panel, null, panel === PREVIEW ? "right" : "left");
   persist(s);
-  if (!groupOf(s.layout, PREVIEW)) void devStop(repo);
 }
 
 /** "Layout zuruecksetzen": Standardlayout, offene Dateien bleiben als Tabs in der main-Gruppe. */
@@ -360,8 +412,8 @@ export function resetLayout(repo: string): void {
   if (s.active !== null) layout = activate(layout, filePanel(s.active));
   s.layout = layout;
   persist(s);
-  // Das Standardlayout hat keine Vorschau.
-  void devStop(repo);
+  // Das Standardlayout hat keine Ausgabe.
+  void runStop(repo);
 }
 
 /** Ordner im Baum auf-/zuklappen und speichern. */
@@ -383,6 +435,13 @@ export function setPin(repo: string, path: string | null): void {
 export function setUrl(repo: string, url: string): void {
   const s = editor(repo);
   s.url = url;
+  persist(s);
+}
+
+/** Startziel der Run-Leiste merken und speichern. */
+export function setRun(repo: string, label: string): void {
+  const s = editor(repo);
+  s.run = label;
   persist(s);
 }
 
@@ -474,102 +533,6 @@ export function watch(repo: string): () => void {
   };
 }
 
-export type DevTarget = { dir: string; pm: string; script: string };
-
-/**
- * Was der Start-Knopf fuer diese Datei ("" = keine offen) starten wuerde: die naechste package.json darueber mit
- * einem dev-/start-/serve-Script (Monorepo: das Paket der Datei, nicht die Wurzel); der Paketmanager nach dem
- * naechsten Lockfile ab dort aufwaerts. null = nichts gefunden. Liest nur, startet nichts.
- */
-export async function devDetect(repo: string, path: string): Promise<DevTarget | null> {
-  const dirs = ancestors(path);
-  const at = (dir: string, file: string) => (dir ? `${dir}/${file}` : file);
-  const has = await fs.stat(repo, dirs.map((d) => at(d, "package.json")));
-  for (const [i, dir] of dirs.entries()) {
-    if (has[i] === null) continue;
-    const pkg = await fs.read(repo, at(dir, "package.json")).then((t) => t.content, () => "");
-    const script = devScript(pkg);
-    if (!script) continue;
-    const up = dirs.slice(i);
-    const locks = await fs.stat(repo, up.flatMap((d) => LOCKFILES.map((f) => at(d, f))));
-    const n = LOCKFILES.length;
-    const j = up.findIndex((_, k) => locks.slice(k * n, k * n + n).some((m) => m !== null));
-    const present = j < 0 ? [] : LOCKFILES.filter((_, k) => locks[j * n + k] !== null);
-    return { dir, pm: packageManager(pkg, present), script };
-  }
-  return null;
-}
-
-/**
- * Dev-Server je Projekt: PTY-id und Listener, auch nach seinem Ende (bis zum naechsten Start oder devStop), weil
- * Output noch nach pty-exit ankommen kann. Nicht reaktiv, der sichtbare Zustand steht in s.dev.
- */
-const servers = new Map<string, { id: string; off: Promise<UnlistenFn>[] }>();
-
-/**
- * Dev-Server starten. Fuehrt Code aus dem Projekt aus: NUR aus dem Klick auf den Start-Knopf rufen.
- * Laeuft schon einer, passiert nichts. Fehler beim Start landen in error.
- */
-export async function devStart(repo: string, t: DevTarget): Promise<void> {
-  const s = editor(repo);
-  if (s.dev.state === "running") return;
-  // Listener eines beendeten Servers abbauen.
-  void devStop(repo);
-  const id = `dev-${crypto.randomUUID()}`;
-  const dec = new TextDecoder();
-  // Nach devStop koennen noch Events unterwegs sein.
-  const mine = () => servers.get(repo)?.id === id;
-  // Adresse aus einer "Local"-Zeile gefunden: steht fest.
-  let fixed = false;
-  s.dev = { state: "running", url: "", log: "", cmd: `${t.pm} run ${t.script}` };
-  // Listener vor dem Start, damit kein frueher Output verloren geht.
-  const off = [
-    listen<number[]>(`pty:${id}`, (e) => {
-      if (!mine()) return;
-      const chunk = dec.decode(new Uint8Array(e.payload), { stream: true });
-      s.dev.log = (s.dev.log + chunk).slice(-65536);
-      // Cursor-Abfrage beantworten wie ein Terminal: ConPTY stellt sie beim Start und haelt sonst den Output zurueck.
-      if (chunk.includes("\x1b[6n")) ptyWrite(id, "\x1b[1;1R").catch(() => {});
-      if (fixed || s.dev.state !== "running") return;
-      // Ganzen Log neu lesen: URL und Escape-Sequenzen koennen ueber zwei Bloecke verteilt ankommen.
-      const text = plain(s.dev.log);
-      const local = serverUrl(text, true);
-      fixed = !!local;
-      // Ohne "Local"-Zeile bleibt die erste Adresse stehen.
-      if (local || !s.dev.url) s.dev.url = local ?? serverUrl(text) ?? "";
-    }),
-    listen(`pty-exit:${id}`, () => {
-      // Listener bleiben: die letzten Zeilen (die Fehlermeldung) kommen evtl. erst nach dem Exit.
-      if (mine()) s.dev = { ...s.dev, state: "exited", url: "" };
-    }),
-  ];
-  servers.set(repo, { id, off });
-  try {
-    await Promise.all(off);
-    // Inzwischen gestoppt: gar nicht erst starten.
-    if (!mine()) return;
-    await startServer(id, repo, t.dir, t.pm, t.script);
-  } catch (e) {
-    if (!mine()) return;
-    void devStop(repo);
-    s.error = String(e);
-  }
-}
-
-/**
- * Dev-Server des Projekts stoppen (samt Kindprozessen); ohne Server passiert nichts. Der Log bleibt stehen.
- * Das Promise endet, wenn die Prozesse beendet sind.
- */
-export function devStop(repo: string): Promise<void> {
-  const v = servers.get(repo);
-  if (!v) return Promise.resolve();
-  servers.delete(repo);
-  for (const p of v.off) p.then((f) => f(), () => {});
-  const s = store.get(repo);
-  if (s) s.dev = { ...s.dev, state: "idle", url: "" };
-  return ptyClose(v.id).catch(() => {});
-}
-
 /** Ungespeicherte Aenderungen in diesem Projekt; ohne repo: in irgendeinem. Reaktiv. */
 export function isDirty(repo?: string): boolean {
   void count;
@@ -585,7 +548,7 @@ export function isDirty(repo?: string): boolean {
 export function drop(repo: string, force = false): boolean {
   if (!store.has(repo)) return true;
   if (!force && isDirty(repo) && !window.confirm("Ungespeicherte Änderungen im Editor verwerfen?")) return false;
-  void devStop(repo);
+  void runStop(repo);
   for (const key of [...snapshots.keys()]) if (key.startsWith(snapKey(repo, ""))) snapshots.delete(key);
   store.delete(repo);
   previewAllow(repo, false).catch(() => {});

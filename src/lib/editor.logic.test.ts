@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ancestors, devScript, devUrl, moved, packageManager, plain, serverUrl, span, under, verdict } from "./editor.logic.ts";
+import { ancestors, devUrl, huge, moved, packageManager, plain, serverUrl, span, under, verdict } from "./editor.logic.ts";
 
 test("unveraenderte Platte: nichts tun, egal ob lokal geaendert", () => {
   assert.equal(verdict(false, 5, 5), "none");
@@ -86,12 +86,7 @@ test("serverUrl: erste lokale Adresse aus dem Output, ohne ANSI", () => {
   assert.equal(serverUrl(proxy, true), null);
 });
 
-test("devScript, packageManager, ancestors", () => {
-  assert.equal(devScript('{"scripts":{"start":"x","dev":"vite"}}'), "dev");
-  assert.equal(devScript('{"scripts":{"start":"react-scripts start"}}'), "start");
-  assert.equal(devScript('{"scripts":{"build":"x","dev":" "}}'), null);
-  assert.equal(devScript("kaputt"), null);
-  assert.equal(devScript("null"), null);
+test("packageManager, ancestors", () => {
   assert.equal(packageManager('{"packageManager":"pnpm@9.1.0+sha"}', ["yarn.lock"]), "pnpm");
   assert.equal(packageManager("{}", ["package-lock.json", "yarn.lock"]), "yarn");
   assert.equal(packageManager("kaputt", ["bun.lockb"]), "bun");
@@ -99,4 +94,11 @@ test("devScript, packageManager, ancestors", () => {
   assert.deepEqual(ancestors("apps/web/src/App.vue"), ["apps/web/src", "apps/web", "apps", ""]);
   assert.deepEqual(ancestors("a.ts"), [""]);
   assert.deepEqual(ancestors(""), [""]);
+});
+
+test("huge: Groesse und minifizierte Zeilen", () => {
+  assert.equal(huge("a\n".repeat(1000)), false);
+  assert.equal(huge("x".repeat(1_000_001)), true);
+  assert.equal(huge("a\n" + "x".repeat(10_000) + "\n"), true);
+  assert.equal(huge(("x".repeat(9_999) + "\n").repeat(50)), false);
 });

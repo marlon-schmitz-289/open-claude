@@ -250,6 +250,16 @@ fn quiet(program: &str) -> Command {
     cmd
 }
 
+/// Prozess samt Kindern beenden. Unix: die Prozessgruppe (Kind mit process_group(0) gestartet), Windows: der Baum.
+/// Die Unity-CLI startet Unity in ihrer Gruppe, Testlaeufer ihre Worker: nur das Kind zu beenden liesse sie weiterlaufen.
+// ponytail: nur SIGTERM, Eskalation auf KILL erst, wenn haengende Prozesse auftreten.
+pub(crate) fn kill_tree(pid: u32) {
+    #[cfg(unix)]
+    let _ = Command::new("kill").args(["-TERM", "--", &format!("-{pid}")]).status();
+    #[cfg(windows)]
+    let _ = quiet("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).status();
+}
+
 fn read_last_commit(repo: &Path) -> String {
     quiet("git")
         .arg("-C")
@@ -503,6 +513,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(pty::Ptys::default())
         .manage(preview::PreviewRoots::default())
+        .manage(runner::Runs::default())
         .register_asynchronous_uri_scheme_protocol("preview", |ctx, req, responder| {
             preview::serve(ctx.app_handle(), req, responder)
         })
@@ -518,7 +529,7 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_close,
-            pty::dev_start,
+            pty::run_start,
             forge::forge_login,
             forge::forge_logout,
             forge::forge_import_cli,
@@ -629,6 +640,7 @@ pub fn run() {
             tauri::RunEvent::Exit => {
                 app.state::<pty::Ptys>().close_all();
                 unity::kill_all();
+                app.state::<runner::Runs>().kill_all();
             }
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => reopen(app),
