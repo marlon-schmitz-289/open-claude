@@ -669,13 +669,13 @@
     if (active === id) sessions.length ? (active = sessions.at(-1)!.id) : back();
   }
 
-  // Klick/Enter oeffnet Git, mit Strg Claude. onSelect der Liste kennt kein Event,
-  // daher Strg in der Capture-Phase merken, bevor die Liste reagiert.
-  let withCtrl = false;
+  // Klick/Enter oeffnet Git, mit Strg+Enter bzw. Umschalt+Klick Claude (Strg+Klick ist auf dem Mac Rechtsklick).
+  // onSelect der Liste kennt kein Event, daher die Taste in der Capture-Phase merken, bevor die Liste reagiert.
+  let withClaude = false;
   // Esc gehoert offenen Dialogen/Menues. Die schliessen schon vor onKey, daher hier vorher nachsehen.
   let overlayOnEsc = false;
   const noteCtrl = (e: KeyboardEvent | PointerEvent) => {
-    withCtrl = e.ctrlKey || e.metaKey;
+    withClaude = e instanceof KeyboardEvent ? e.ctrlKey || e.metaKey : e.shiftKey;
     if (!(e instanceof KeyboardEvent)) return;
     // Capture am Fenster: vor xterm und CodeMirror, die Shell bekommt die Taste nicht.
     const dir = zoomKey(e, mac);
@@ -1131,7 +1131,7 @@
                     <Command.Item
                       {...props}
                       value={item.repo.path}
-                      onSelect={() => (withCtrl ? launch(item.repo) : openGit(item.repo))}
+                      onSelect={() => (withClaude ? launch(item.repo) : openGit(item.repo))}
                       class="gap-3 px-3 py-2"
                     >
                       <button
@@ -1425,7 +1425,7 @@
     <div class="grid gap-6 sm:grid-cols-2">
       {@render keys("Liste", [
         ["⏎ / Klick", "Git-Ansicht öffnen"],
-        ["Strg + ⏎ / Strg + Klick", "Claude im Projekt starten"],
+        ["Strg + ⏎ / Umschalt + Klick", "Claude im Projekt starten"],
         ["↑ ↓", "Projekt wählen"],
         ["Strg + 1 … 9", "Claude im Treffer starten"],
         ["Strg + G", "Git-Ansicht öffnen"],
