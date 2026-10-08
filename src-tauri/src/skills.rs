@@ -235,8 +235,17 @@ fn exclude(repo: &Path) {
 }
 
 #[tauri::command]
-pub async fn skills_list(path: String) -> Result<SkillsInfo, String> {
-    blocking(move || Ok(list(&home(), Path::new(&path)))).await
+pub async fn skills_list(app: tauri::AppHandle, path: String) -> Result<SkillsInfo, String> {
+    blocking(move || {
+        let mut info = list(&home(), Path::new(&path));
+        // Skills der eingebauten Mod (kein installiertes Plugin): wie eigene Skills pro Projekt schaltbar,
+        // Key mit Namensraum wie in Claude Code (open-claude:smart-tests).
+        if let Some(dir) = crate::pty::builtin_mod(&app) {
+            info.skills.extend(scan(&dir.join("skills"), "plugin", None).into_iter().map(|s| Skill { key: format!("open-claude:{}", s.key), ..s }));
+        }
+        Ok(info)
+    })
+    .await
 }
 
 #[tauri::command]

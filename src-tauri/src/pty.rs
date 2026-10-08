@@ -226,14 +226,15 @@ fn theme_for(cur: &str, mode: &str) -> Option<&'static str> {
 /// Eingebaute Mod. Debug: Quellordner direkt (Hot-Reload). Release: eingebettet und nach
 /// app_data_dir geschrieben, weil claude in jeden Mod-Ordner .claude-plugin/types/ schreibt
 /// und das signierte .app-Bundle dabei kaputt ginge.
-fn builtin_mod(app: &AppHandle) -> Option<PathBuf> {
+pub(crate) fn builtin_mod(app: &AppHandle) -> Option<PathBuf> {
     if cfg!(debug_assertions) {
         return Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("mods/open-claude"));
     }
     let dir = app.path().app_data_dir().ok()?.join("mods/open-claude");
-    const FILES: [(&str, &str); 6] = [
+    const FILES: [(&str, &str); 7] = [
         (".claude-plugin/plugin.json", include_str!("../mods/open-claude/.claude-plugin/plugin.json")),
         ("hooks/hooks.json", include_str!("../mods/open-claude/hooks/hooks.json")),
+        ("skills/smart-tests/SKILL.md", include_str!("../mods/open-claude/skills/smart-tests/SKILL.md")),
         ("hooks/register.tsx", include_str!("../mods/open-claude/hooks/register.tsx")),
         ("types/index.d.ts", include_str!("../mods/open-claude/types/index.d.ts")),
         ("themes/open-claude.json", include_str!("../mods/open-claude/themes/open-claude.json")),
