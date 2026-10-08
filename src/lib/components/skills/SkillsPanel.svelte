@@ -1,5 +1,6 @@
 <script lang="ts">
   import Notice from "$lib/components/Notice.svelte";
+  import PluginsPanel from "./PluginsPanel.svelte";
   import { untrack } from "svelte";
   import { Input } from "$lib/components/ui/input/index.js";
   import { fuzzy } from "$lib/fuzzy";
@@ -20,6 +21,16 @@
   let loading = $state(true);
   let error = $state("");
   let query = $state("");
+  let mode = $state<"skills" | "plugins">("skills");
+  // Waehrend PluginsPanel die CLI laufen hat, nicht wegschalten
+  let pluginsBusy = $state<string | null>(null);
+
+  // Zurueck zu Skills: neu installierte Plugins und ihre Skills zeigen
+  function setMode(m: typeof mode) {
+    if (m === mode) return;
+    mode = m;
+    if (m === "skills") reload();
+  }
 
   async function reload() {
     loading = true;
@@ -61,6 +72,19 @@
   }
 </script>
 
+{#snippet modes()}
+  <div class="bg-secondary flex shrink-0 rounded p-0.5">
+    {#each [["Skills", "skills"], ["Plugins", "plugins"]] as const as [label, m] (m)}
+      <button
+        class="rounded px-1.5 py-0.5 text-[10px] {mode === m ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
+        aria-pressed={mode === m}
+        disabled={!!pluginsBusy}
+        onclick={() => setMode(m)}>{label}</button
+      >
+    {/each}
+  </div>
+{/snippet}
+
 {#snippet toggle(on: boolean, onclick: () => void, label: string)}
   <button
     class="relative h-3.5 w-6 shrink-0 rounded-full transition-colors {on ? 'bg-primary' : 'bg-secondary ring-border ring-1'}"
@@ -100,71 +124,76 @@
   </li>
 {/snippet}
 
-<div class="flex h-full min-h-0 flex-col text-xs">
-  <Notice bind:text={error} />
+{#if mode === "plugins"}
+  <PluginsPanel {repo} lead={modes} bind:busy={pluginsBusy} />
+{:else}
+  <div class="flex h-full min-h-0 flex-col text-xs">
+    <Notice bind:text={error} />
 
-  <div class="border-border flex flex-wrap items-center gap-2 border-b px-3 py-2">
-    <span class="text-muted-foreground">Profil</span>
-    <select
-      class="bg-secondary border-border rounded border px-1.5 py-0.5 text-xs"
-      bind:value={() => (ps?.profile === undefined ? "" : (ps.profile ?? NONE)), setProfile}
-    >
-      <option value="">Nach Typ ({byKind})</option>
-      <option value={NONE}>Kein Profil</option>
-      {#each names as n (n)}<option value={n}>{n}</option>{/each}
-    </select>
-    <span class="flex-1"></span>
-    <Input bind:value={query} placeholder="Skill suchen" class="h-7 w-48 text-xs" />
-    <button
-      class="text-muted-foreground hover:text-foreground disabled:opacity-50"
-      title="Neu laden"
-      disabled={loading}
-      onclick={reload}><RefreshCwIcon class="size-3.5 {loading ? 'animate-spin' : ''}" /></button
-    >
-  </div>
-
-  {#if loading && !info}
-    <p class="text-muted-foreground px-3 py-4">Lese Skills …</p>
-  {:else if l}
-    <div class="min-h-0 flex-1 overflow-y-auto">
-      {#if !own.length && !plugins.length}
-        <p class="text-muted-foreground px-3 py-4">{query.trim() ? `Kein Skill passt zu „${query.trim()}“.` : "Keine Skills gefunden."}</p>
-      {/if}
-      <ul>
-        {#each own as sk (sk.key)}{@render row(sk, false)}{/each}
-      </ul>
-      {#each plugins as g (g.id)}
-        {@const pv = resolve("plugin", g.id, l)}
-        <div class="bg-chrome border-border flex items-center gap-3 border-y px-3 py-1.5">
-          <span class="flex-1 truncate font-mono text-[11px] font-semibold">{g.id}</span>
-          {@render origin(pv.source, () => onproject(adjust(ps, "plugin", g.id)))}
-          {@render toggle(pv.value, () => onproject(adjust(ps, "plugin", g.id, !pv.value)), g.id)}
-        </div>
-        <ul>
-          {#each g.items as sk (sk.key)}{@render row(sk, !pv.value)}{/each}
-        </ul>
-      {/each}
-      {#if mods}
-        <div class="bg-chrome border-border flex items-center gap-3 border-y px-3 py-1.5">
-          <span class="flex-1 truncate text-[11px] font-semibold">Mods</span>
-          <button
-            class="text-muted-foreground hover:text-foreground text-[11px]"
-            title={mods.dir}
-            onclick={() => invoke("reveal", { path: mods!.dir }).catch((e) => (error = String(e)))}>Ordner öffnen</button
-          >
-        </div>
-        <p class="text-muted-foreground px-3 py-1.5 text-[11px]">
-          Mods greifen beim nächsten Claude-Start im Terminal.{mods.mods.length ? "" : " Noch keine Mods installiert."}
-        </p>
-        <ul>
-          {#each mods.mods as m (m.path)}
-            <li class="px-3 py-1.5">
-              <div class="truncate font-mono text-[11px] font-semibold">{m.name}</div>
-              {#if m.description}<div class="text-muted-foreground truncate text-[11px]" title={m.description}>{m.description}</div>{/if}
-            </li>
-          {/each}
-        </ul>
-      {/if}
+    <div class="border-border flex flex-wrap items-center gap-2 border-b px-3 py-2">
+      {@render modes()}
+      <span class="text-muted-foreground">Profil</span>
+      <select
+        class="bg-secondary border-border rounded border px-1.5 py-0.5 text-xs"
+        bind:value={() => (ps?.profile === undefined ? "" : (ps.profile ?? NONE)), setProfile}
+      >
+        <option value="">Nach Typ ({byKind})</option>
+        <option value={NONE}>Kein Profil</option>
+        {#each names as n (n)}<option value={n}>{n}</option>{/each}
+      </select>
+      <span class="flex-1"></span>
+      <Input bind:value={query} placeholder="Skill suchen" class="h-7 w-48 text-xs" />
+      <button
+        class="text-muted-foreground hover:text-foreground disabled:opacity-50"
+        title="Neu laden"
+        disabled={loading}
+        onclick={reload}><RefreshCwIcon class="size-3.5 {loading ? 'animate-spin' : ''}" /></button
+      >
     </div>
-  {/if}
-</div>
+
+    {#if loading && !info}
+      <p class="text-muted-foreground px-3 py-4">Lese Skills …</p>
+    {:else if l}
+      <div class="min-h-0 flex-1 overflow-y-auto">
+        {#if !own.length && !plugins.length}
+          <p class="text-muted-foreground px-3 py-4">{query.trim() ? `Kein Skill passt zu „${query.trim()}“.` : "Keine Skills gefunden."}</p>
+        {/if}
+        <ul>
+          {#each own as sk (sk.key)}{@render row(sk, false)}{/each}
+        </ul>
+        {#each plugins as g (g.id)}
+          {@const pv = resolve("plugin", g.id, l)}
+          <div class="bg-chrome border-border flex items-center gap-3 border-y px-3 py-1.5">
+            <span class="flex-1 truncate font-mono text-[11px] font-semibold">{g.id}</span>
+            {@render origin(pv.source, () => onproject(adjust(ps, "plugin", g.id)))}
+            {@render toggle(pv.value, () => onproject(adjust(ps, "plugin", g.id, !pv.value)), g.id)}
+          </div>
+          <ul>
+            {#each g.items as sk (sk.key)}{@render row(sk, !pv.value)}{/each}
+          </ul>
+        {/each}
+        {#if mods}
+          <div class="bg-chrome border-border flex items-center gap-3 border-y px-3 py-1.5">
+            <span class="flex-1 truncate text-[11px] font-semibold">Mods</span>
+            <button
+              class="text-muted-foreground hover:text-foreground text-[11px]"
+              title={mods.dir}
+              onclick={() => invoke("reveal", { path: mods!.dir }).catch((e) => (error = String(e)))}>Ordner öffnen</button
+            >
+          </div>
+          <p class="text-muted-foreground px-3 py-1.5 text-[11px]">
+            Mods greifen beim nächsten Claude-Start im Terminal.{mods.mods.length ? "" : " Noch keine Mods installiert."}
+          </p>
+          <ul>
+            {#each mods.mods as m (m.path)}
+              <li class="px-3 py-1.5">
+                <div class="truncate font-mono text-[11px] font-semibold">{m.name}</div>
+                {#if m.description}<div class="text-muted-foreground truncate text-[11px]" title={m.description}>{m.description}</div>{/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+    {/if}
+  </div>
+{/if}

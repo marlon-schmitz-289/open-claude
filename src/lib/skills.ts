@@ -1,6 +1,7 @@
 // Vertrag zwischen Frontend und src-tauri/src/skills.rs.
 // Namen und Felder hier sind verbindlich; Rust serialisiert exakt diese Formen (camelCase).
 import { invoke } from "@tauri-apps/api/core";
+import { fuzzy } from "./fuzzy.ts";
 
 export type Skill = {
   /** "name" bzw. "plugin:name" fuer Plugin-Skills (plugin = Teil vor "@" im Plugin-Key). */
@@ -48,6 +49,45 @@ export type LocalPayload = {
 export type Mod = { name: string; description: string; path: string };
 export type ModsInfo = { dir: string; mods: Mod[] };
 
+// ---------- Plugin-Verwaltung (claude plugin ...) ----------
+
+export type InstalledPlugin = {
+  id: string;
+  version: string;
+  scope: "user" | "project" | "local";
+  enabled: boolean;
+  installPath: string;
+  projectPath?: string;
+  installedAt?: string;
+  lastUpdated?: string;
+};
+export type AvailablePlugin = {
+  pluginId: string;
+  name: string;
+  description?: string;
+  marketplaceName: string;
+  version?: string;
+  installCount?: number;
+};
+export type Marketplace = {
+  source: { source: string; repo?: string; url?: string; path?: string };
+  installLocation: string;
+  lastUpdated?: string;
+};
+export type PluginsInfo = {
+  installed: InstalledPlugin[];
+  available: AvailablePlugin[];
+  marketplaces: Record<string, Marketplace>;
+  meta: Record<string, { latest: string | null; update: boolean; description: string }>;
+};
+export type PluginAction = "install" | "update" | "uninstall" | "enable" | "disable" | "mp-add" | "mp-remove" | "mp-update";
+/** Eine JSON-Ergebniszeile der CLI. */
+export type PluginResult = {
+  outcome?: string;
+  message?: string;
+  shownCommand?: { sha256: string; command?: unknown };
+} & Record<string, unknown>;
+
 const call = <T>(cmd: string, args: Record<string, unknown>) => invoke<T>(cmd, args);
 
 export const skills = {
@@ -55,7 +95,32 @@ export const skills = {
   mods: () => call<ModsInfo>("mods_list", {}),
   /** Schreibt nur diese beiden Keys in <repo>/.claude/settings.local.json; null entfernt den Key. */
   writeLocal: (path: string, p: LocalPayload) => call<void>("skills_write_local", { path, ...p }),
+  plugins: (path: string) => call<PluginsInfo>("plugins_list", { path }),
+  pluginRun: (path: string, action: PluginAction, target: string, scope?: string, accept?: string) =>
+    call<PluginResult>("plugins_run", { path, action, target, scope, accept }),
 };
+
+/** Installierte nach ID gruppiert; main = user-, sonst project-Eintrag; locals = Eintraege mit Scope local. */
+export function groupInstalled(list: InstalledPlugin[]) {
+  const ids = [...new Set(list.map((p) => p.id))];
+  return ids.map((id) => {
+    const all = list.filter((p) => p.id === id);
+    const main = all.find((p) => p.scope === "user") ?? all.find((p) => p.scope === "project");
+    return { id, main, locals: all.filter((p) => p.scope === "local") };
+  });
+}
+
+/** Verfuegbare ohne installierte IDs, gefiltert per fuzzy(id + " " + description), sonst nach installCount; max. limit. */
+export function pickAvailable(av: AvailablePlugin[], installed: Set<string>, query: string, limit = 50) {
+  const q = query.trim();
+  const scored = av
+    .filter((p) => !installed.has(p.pluginId))
+    .map((p) => ({ p, m: fuzzy(`${p.pluginId} ${p.description ?? ""}`, q) }))
+    .filter((x) => x.m)
+    .sort((a, b) => (q ? b.m!.score - a.m!.score : (b.p.installCount ?? 0) - (a.p.installCount ?? 0)));
+  // ponytail: max. 50 Zeilen statt Virtualisierung; reicht, weil die Suche eingrenzt
+  return { items: scored.slice(0, limit).map((x) => x.p), total: scored.length };
+}
 
 // ---------- Reine Logik: Schichten, Payload, Projekt-Anpassungen ----------
 

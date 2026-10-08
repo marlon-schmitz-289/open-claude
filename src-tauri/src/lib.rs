@@ -625,6 +625,8 @@ pub fn run() {
             skills::skills_list,
             skills::skills_write_local,
             skills::mods_list,
+            skills::plugins_list,
+            skills::plugins_run,
             activity::claude_activity,
             activity::claude_image,
             activity::claude_agent_log,

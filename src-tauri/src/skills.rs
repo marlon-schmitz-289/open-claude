@@ -299,9 +299,210 @@ pub async fn mods_list() -> Result<ModsInfo, String> {
     .await
 }
 
+// ---------- Plugin-Verwaltung ueber `claude plugin` ----------
+// Schreiben nur ueber die CLI (feste Argument-Arrays); nie Scope local, settings.local.json gehoert der App.
+
+#[derive(Serialize, Debug, PartialEq)]
+pub struct Meta {
+    latest: Option<String>,
+    update: bool,
+    description: String,
+}
+
+#[derive(Serialize)]
+pub struct PluginsInfo {
+    installed: Value,
+    available: Value,
+    marketplaces: Value,
+    meta: BTreeMap<String, Meta>,
+}
+
+/// Name wie Plugin/Marketplace: [A-Za-z0-9][A-Za-z0-9._-]*
+fn name_ok(s: &str) -> bool {
+    s.starts_with(|c: char| c.is_ascii_alphanumeric()) && s.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+}
+
+fn id_ok(s: &str) -> bool {
+    s.split_once('@').is_some_and(|(a, b)| name_ok(a) && name_ok(b))
+}
+
+fn source_ok(s: &str) -> bool {
+    let repo = s.split_once('/').is_some_and(|(a, b)| name_ok(a) && name_ok(b));
+    let path = Path::new(s);
+    repo || s.starts_with("https://") || s.starts_with("git@") || s.starts_with("ssh://") || (path.is_absolute() && path.is_dir())
+}
+
+/// Argumente fuer `claude plugin ...`; installed/marketplaces = bekannte IDs bzw. Namen.
+pub(crate) fn plugin_args(
+    action: &str,
+    target: &str,
+    scope: Option<&str>,
+    accept: Option<&str>,
+    installed: &[String],
+    marketplaces: &[String],
+) -> Result<Vec<String>, String> {
+    if target.is_empty() || target.starts_with('-') || target.chars().any(char::is_control) {
+        return Err(format!("Ungueltiges Ziel: {target:?}"));
+    }
+    if accept.is_some_and(|a| a.len() != 64 || !a.chars().all(|c| c.is_ascii_hexdigit())) {
+        return Err("Ungueltige Kommando-Bestaetigung".into());
+    }
+    let known = || installed.iter().any(|i| i == target);
+    let (ok, scopes): (bool, &[&str]) = match action {
+        "install" => (id_ok(target), &["user", "project"]),
+        // uninstall local wuerde settings.local.json aendern, die gehoert der App
+        "update" => (known(), &["user", "project", "local"]),
+        "uninstall" => (known(), &["user", "project"]),
+        "enable" | "disable" => (known(), &["user", "project"]),
+        "mp-add" => (source_ok(target), &[]),
+        "mp-remove" | "mp-update" => (marketplaces.iter().any(|m| m == target), &[]),
+        _ => return Err(format!("Unbekannte Aktion: {action}")),
+    };
+    if !ok {
+        return Err(format!("{action}: {target} ist kein gueltiges/bekanntes Ziel"));
+    }
+    let mut args: Vec<String> = match action.strip_prefix("mp-") {
+        Some(sub) => vec!["marketplace".into(), sub.into(), target.into(), "--json".into()],
+        None => vec![action.into(), target.into(), "--json".into()],
+    };
+    if !scopes.is_empty() {
+        let s = scope.unwrap_or("user");
+        if !scopes.contains(&s) {
+            return Err(format!("{action}: Scope {s} nicht erlaubt"));
+        }
+        args.extend(["-s".into(), s.into()]);
+    }
+    if let Some(a) = accept.filter(|_| matches!(action, "install" | "update")) {
+        args.extend(["--accept-command".into(), a.into()]);
+    }
+    Ok(args)
+}
+
+/// Neueste Version eines Plugins laut Marketplace-Klon; dazu die Beschreibung.
+pub(crate) fn latest(mp_dir: &Path, name: &str) -> (Option<String>, String) {
+    let mp = read_json(&mp_dir.join(".claude-plugin").join("marketplace.json")).unwrap_or_default();
+    let entry = mp.get("plugins").and_then(Value::as_array).and_then(|a| a.iter().find(|p| p.get("name").and_then(Value::as_str) == Some(name)));
+    let Some(entry) = entry else { return (None, String::new()) };
+    let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from);
+    let source = entry.get("source");
+    let plugin = source.and_then(Value::as_str).and_then(|src| read_json(&mp_dir.join(src).join(".claude-plugin").join("plugin.json")));
+    let description = s(entry, "description").or_else(|| plugin.as_ref().and_then(|p| s(p, "description"))).unwrap_or_default();
+    // .gcs-sha bewusst nicht: passt nicht zum installierten Stand
+    let version = s(entry, "version")
+        .or_else(|| plugin.as_ref().and_then(|p| s(p, "version")))
+        .or_else(|| source.and_then(|v| s(v, "sha")))
+        .or_else(|| {
+            source.filter(|v| v.is_string() && mp_dir.join(".git").exists())?;
+            let o = crate::quiet("git").arg("-C").arg(mp_dir).args(["rev-parse", "HEAD"]).output().ok()?;
+            o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty())
+        });
+    (version, description)
+}
+
+/// Ist latest neuer als das Installierte? Commit-SHAs per Praefix, sonst Textvergleich.
+pub(crate) fn outdated(version: &str, sha: Option<&str>, latest: &str) -> bool {
+    if latest.len() == 40 && latest.chars().all(|c| c.is_ascii_hexdigit()) {
+        return !sha.is_some_and(|s| s.starts_with(&latest[..12]));
+    }
+    latest != version
+}
+
+/// Letzte nicht-leere Zeile, die ein JSON-Objekt ist.
+pub(crate) fn last_json(stdout: &str) -> Option<Value> {
+    let line = stdout.lines().map(str::trim).rfind(|l| !l.is_empty())?;
+    serde_json::from_str::<Value>(line).ok().filter(Value::is_object)
+}
+
+fn plugins_dir() -> PathBuf {
+    home().join(".claude").join("plugins")
+}
+
+fn keys(v: Option<&Value>) -> Vec<String> {
+    v.and_then(Value::as_object).map(|m| m.keys().cloned().collect()).unwrap_or_default()
+}
+
+// ponytail: Windows nur claude.exe (nativer Installer); npm-Shim claude.cmd braeuchte cmd /c wie runner.rs, erst bei Bedarf
+fn claude(path: &str, args: &[String]) -> Result<std::process::Output, String> {
+    if !Path::new(path).is_dir() {
+        return Err(format!("{path} ist kein Ordner"));
+    }
+    crate::quiet("claude")
+        .arg("plugin")
+        .args(args)
+        .current_dir(path)
+        .env("NO_COLOR", "1")
+        .env("GIT_TERMINAL_PROMPT", "0") // kein haengender Credential-Prompt
+        .output()
+        .map_err(|e| format!("claude konnte nicht gestartet werden: {e}"))
+}
+
+fn plugins_info(path: &str) -> Result<PluginsInfo, String> {
+    let o = claude(path, &["list".into(), "--json".into(), "--available".into()])?;
+    let text = String::from_utf8_lossy(&o.stdout);
+    let mut list: Value = serde_json::from_str(text.trim()).map_err(|e| {
+        let err = String::from_utf8_lossy(&o.stderr);
+        format!("claude plugin list: {}", if err.trim().is_empty() { e.to_string() } else { err.trim().to_string() })
+    })?;
+    let dir = plugins_dir();
+    let marketplaces = read_json(&dir.join("known_marketplaces.json")).filter(Value::is_object).unwrap_or_else(|| Value::Object(Map::new()));
+    let shas = read_json(&dir.join("installed_plugins.json")).unwrap_or_default();
+    let installed = list.get_mut("installed").map(Value::take).unwrap_or_else(|| Value::Array(vec![]));
+    let mut meta: BTreeMap<String, Meta> = BTreeMap::new();
+    let get = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(String::from);
+    // update = irgendein Eintrag (user/project/local) veraltet; SHA aus dem passenden Eintrag
+    for p in installed.as_array().into_iter().flatten() {
+        let Some(id) = p.get("id").and_then(Value::as_str) else { continue };
+        let m = meta.entry(id.to_string()).or_insert_with(|| {
+            let (name, mp) = id.split_once('@').unwrap_or((id, ""));
+            let loc = marketplaces.get(mp).and_then(|m| m.get("installLocation")).and_then(Value::as_str);
+            let (latest, description) = loc.map(|l| latest(Path::new(l), name)).unwrap_or_default();
+            Meta { latest, update: false, description }
+        });
+        let Some(l) = m.latest.as_deref() else { continue };
+        let entries = shas.get("plugins").and_then(|m| m.get(id)).and_then(Value::as_array);
+        let same = |e: &&Value| get(e, "scope") == get(p, "scope") && get(e, "projectPath") == get(p, "projectPath");
+        let sha = entries.and_then(|e| e.iter().find(same)).and_then(|e| e.get("gitCommitSha")).and_then(Value::as_str);
+        let version = p.get("version").and_then(Value::as_str).unwrap_or_default();
+        m.update |= outdated(version, sha, l);
+    }
+    let available = list.get_mut("available").map(Value::take).unwrap_or_else(|| Value::Array(vec![]));
+    Ok(PluginsInfo { installed, available, marketplaces, meta })
+}
+
+#[tauri::command]
+pub async fn plugins_list(path: String) -> Result<PluginsInfo, String> {
+    blocking(move || plugins_info(&path)).await
+}
+
+#[tauri::command]
+pub async fn plugins_run(
+    path: String,
+    action: String,
+    target: String,
+    scope: Option<String>,
+    accept: Option<String>,
+) -> Result<Value, String> {
+    blocking(move || {
+        let dir = plugins_dir();
+        let installed = keys(read_json(&dir.join("installed_plugins.json")).as_ref().and_then(|v| v.get("plugins")));
+        let marketplaces = keys(read_json(&dir.join("known_marketplaces.json")).as_ref());
+        let args = plugin_args(&action, &target, scope.as_deref(), accept.as_deref(), &installed, &marketplaces)?;
+        let o = claude(&path, &args)?;
+        let out = String::from_utf8_lossy(&o.stdout);
+        last_json(&out).ok_or_else(|| {
+            let err = String::from_utf8_lossy(&o.stderr);
+            if err.trim().is_empty() { out.trim().to_string() } else { err.trim().to_string() }
+        })
+    })
+    .await
+}
+
 #[cfg(test)]
 #[path = "skills_scan_tests.rs"]
 mod scan_tests;
 #[cfg(test)]
 #[path = "skills_write_tests.rs"]
 mod write_tests;
+#[cfg(test)]
+#[path = "skills_plugins_tests.rs"]
+mod plugins_tests;
