@@ -262,19 +262,81 @@
     store?.set("zoom", zoom);
   }
   onMount(() => {
-    // Touchpad und Pinch schicken viele kleine Ereignisse: hoechstens ein Schritt je 80 ms.
-    let last = 0;
+    // Flaechen mit eigenem Zoom (Bildansicht) bekommen ihre Ereignisse selbst.
+    const own = (e: Event) => !!(e.target as Element | null)?.closest?.("[data-own-zoom]");
+    // Mausrad-Raste = ein Schritt; Touchpad-Pinch (viele kleine Deltas) wird gesammelt, je 40 Einheiten ein
+    // Schritt. Eine Zeitsperre liess beim durchgehenden Pinchen nur einen Schritt pro Geste durch.
+    let acc = 0;
+    let lastAt = 0;
     const onWheel = (e: WheelEvent) => {
-      if (!(e.ctrlKey || (mac && e.metaKey)) || !e.deltaY) return;
+      if (!(e.ctrlKey || (mac && e.metaKey)) || !e.deltaY || own(e)) return;
       e.preventDefault();
       e.stopPropagation();
-      if (e.timeStamp - last < 80) return;
-      last = e.timeStamp;
-      setZoom(-Math.sign(e.deltaY));
+      if (e.deltaMode !== WheelEvent.DOM_DELTA_PIXEL || Math.abs(e.deltaY) >= 50) {
+        acc = 0;
+        return setZoom(-Math.sign(e.deltaY));
+      }
+      if (e.timeStamp - lastAt > 300) acc = 0;
+      lastAt = e.timeStamp;
+      acc += e.deltaY;
+      while (Math.abs(acc) >= 40) {
+        const d = Math.sign(acc);
+        acc -= d * 40;
+        setZoom(-d);
+      }
     };
+    // WebKit (macOS) meldet Pinch als GestureEvent mit kumulativem scale statt als Strg+Rad: je ~12 % ein
+    // Schritt. preventDefault verhindert zudem das native Vergroessern der ganzen Seite.
+    let base = 1;
+    const onGesture = (e: Event) => {
+      e.preventDefault();
+      if (own(e)) return;
+      const scale = (e as Event & { scale: number }).scale;
+      if (e.type === "gesturestart") base = 1;
+      else if (e.type === "gesturechange" && Math.abs(Math.log(scale / base)) >= 0.12) {
+        setZoom(scale > base ? 1 : -1);
+        base = scale;
+      }
+    };
+    const gestures = ["gesturestart", "gesturechange"];
     // Nicht passiv, sonst wirkt preventDefault nicht; Capture, damit es auch ueber dem Terminal greift.
     window.addEventListener("wheel", onWheel, { capture: true, passive: false });
-    return () => window.removeEventListener("wheel", onWheel, { capture: true });
+    for (const t of gestures) window.addEventListener(t, onGesture, { passive: false });
+    return () => {
+      window.removeEventListener("wheel", onWheel, { capture: true });
+      for (const t of gestures) window.removeEventListener(t, onGesture);
+    };
+  });
+
+  // Links nie in der App-Webview oder einem neuen App-Fenster oeffnen (zeigte sonst 404 vom Dev-Server bzw.
+  // ein leeres Fenster): http(s) im System-Browser, alles andere (relativ, file:, javascript:) verwerfen.
+  onMount(() => {
+    const external = (href: string) => {
+      try {
+        const u = new URL(href, location.href);
+        if (u.origin !== location.origin && (u.protocol === "https:" || u.protocol === "http:")) forge.openUrl(u.href).catch(() => {});
+      } catch {}
+    };
+    const open = window.open;
+    window.open = (url) => (url && external(String(url)), null);
+    // Bubble-Phase: Markdown.svelte u. a. erledigen ihre Links selbst (defaultPrevented).
+    const onClick = (e: MouseEvent) => {
+      const a = (e.target as Element | null)?.closest?.("a[href]");
+      if (!a || e.defaultPrevented) return;
+      e.preventDefault();
+      external(a.getAttribute("href")!);
+    };
+    // Natives Kontextmenue auf Links ("In neuem Fenster oeffnen") wuerde ein App-Fenster aufmachen.
+    const onMenu = (e: MouseEvent) => (e.target as Element | null)?.closest?.("a[href]") && e.preventDefault();
+    window.addEventListener("click", onClick);
+    window.addEventListener("auxclick", onClick);
+    window.addEventListener("contextmenu", onMenu);
+    return () => {
+      window.open = open;
+      window.removeEventListener("click", onClick);
+      window.removeEventListener("auxclick", onClick);
+      window.removeEventListener("contextmenu", onMenu);
+    };
   });
 
   // Neue Version aus GitHub-Releases, beim Start und alle 4 h; Fehler (offline, Dev-Build) still ignorieren.

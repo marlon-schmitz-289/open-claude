@@ -383,6 +383,26 @@ async fn trash_repo(path: String, root: String) -> Result<(), String> {
 }
 
 /// Oeffnet Ordner oder URL mit dem Standardprogramm (Explorer, Finder, xdg-open).
+/// Navigation der Webview (auch iframes) pruefen. Links, die JS nicht abfaengt (natives Kontextmenue
+/// "Link oeffnen" u. ae.), landeten sonst in der App: extern -> System-Browser, App-Unterseiten -> 404.
+/// localhost bleibt erlaubt, die Vorschau zeigt lokale Dev-Server.
+// ponytail: externe Seiten in der Vorschau oeffnen damit im Browser; Frame-Unterscheidung erst wenn noetig
+/// Some(true) = erlauben, Some(false) = verwerfen, None = im System-Browser oeffnen.
+fn nav(url: &tauri::Url, dev: Option<&tauri::Url>) -> Option<bool> {
+    if url.scheme() == "ipc" || url.host_str() == Some("ipc.localhost") {
+        return Some(true);
+    }
+    if url.scheme() == "tauri" || url.host_str() == Some("tauri.localhost") || dev.is_some_and(|d| d.origin() == url.origin()) {
+        return Some(url.path() == "/");
+    }
+    match url.scheme() {
+        "http" | "https" if matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")) => Some(true),
+        "http" | "https" => None,
+        "about" | "data" | "blob" => Some(true),
+        _ => Some(false),
+    }
+}
+
 pub(crate) fn open_system(target: impl AsRef<std::ffi::OsStr>) -> std::io::Result<()> {
     let prog = if cfg!(windows) {
         "explorer"
@@ -650,6 +670,24 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn navigation_nur_app_und_lokal() {
+        let u = |s: &str| tauri::Url::parse(s).unwrap();
+        let dev = u("http://localhost:1420");
+        let nav = |s: &str| super::nav(&u(s), Some(&dev));
+        assert_eq!(nav("http://localhost:1420/"), Some(true));
+        assert_eq!(nav("http://localhost:1420/releases"), Some(false));
+        assert_eq!(nav("tauri://localhost/"), Some(true));
+        assert_eq!(nav("tauri://localhost/releases"), Some(false));
+        assert_eq!(nav("http://tauri.localhost/x"), Some(false));
+        assert_eq!(nav("http://ipc.localhost/plugin%3Afoo"), Some(true));
+        assert_eq!(nav("http://localhost:5173/app"), Some(true));
+        assert_eq!(nav("about:blank"), Some(true));
+        assert_eq!(nav("https://github.com/x"), None);
+        assert_eq!(nav("file:///etc/passwd"), Some(false));
+        assert_eq!(nav("javascript:alert(1)"), Some(false));
+    }
+
     use super::{branch_from_head, kind_in, langs_in, scan_blocking, strip_appdir, trashable, HOOK_VARS};
 
     const APPDIR: &str = "/tmp/.mount_OpenCl42";
