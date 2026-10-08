@@ -13,12 +13,11 @@
     "windows": [
       {
         "title": "Open Claude",
-        "width": 820,
+        "width": 1280,
         "height": 580,
         "minWidth": 520,
         "minHeight": 360,
-        "decorations": false,
-        "theme": "Dark"
+        "decorations": false
       }
     ],
     "security": {

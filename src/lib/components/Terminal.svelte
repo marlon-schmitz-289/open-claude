@@ -9,6 +9,8 @@
   import "@xterm/xterm/css/xterm.css";
   import ClaudeLoader from "./ClaudeLoader.svelte";
   import { evenCell } from "$lib/termcell";
+  import { theme } from "$lib/theme.svelte";
+  import { DARK, LIGHT, LINKS } from "$lib/termtheme";
 
   let {
     id,
@@ -98,38 +100,18 @@
       allowTransparency: true,
       cursorBlink: true,
       cursorStyle: "bar",
+      // Unfokussiert sonst ein Umriss-Kasten ueber dem Zeichen (v. a. auf dem Mac auffaellig).
+      cursorInactiveStyle: "none",
+      linkHandler: LINKS,
       fontFamily: css.getPropertyValue("--font-mono") || "monospace",
       fontSize: 13,
       ...base,
       fontWeightBold: "600",
       scrollback: 10000,
       smoothScrollDuration: 90,
-      // Palette Richtung Tokyo Night, magenta nah am Primary.
-      theme: {
-        // --card mit Alpha 0: WebGL malt Zellen mit Attribut (dim, kursiv) deckend in dieser Farbe,
-        // bei #00000000 also schwarz.
-        background: "#181b2100",
-        foreground: css.getPropertyValue("--foreground"),
-        cursor: css.getPropertyValue("--primary"),
-        cursorAccent: "#1a1b26",
-        selectionBackground: "#a78bfa40",
-        black: "#2a2b3d",
-        red: "#f7768e",
-        green: "#9ece6a",
-        yellow: "#e0af68",
-        blue: "#7aa2f7",
-        magenta: "#a78bfa",
-        cyan: "#7dcfff",
-        white: "#c0caf5",
-        brightBlack: "#565f89",
-        brightRed: "#ff8fa3",
-        brightGreen: "#b9f27c",
-        brightYellow: "#ffc777",
-        brightBlue: "#8db0ff",
-        brightMagenta: "#c4b5fd",
-        brightCyan: "#a4e2ff",
-        brightWhite: "#e5e9f7",
-      },
+      drawBoldTextInBrightColors: false,
+      // Nur beim Start: claude laeuft mit festem Hell/Dunkel-Theme, ein Live-Wechsel machte den Text unlesbar.
+      theme: theme.dark ? DARK : LIGHT,
     });
     term = t;
     t.loadAddon(fit);
@@ -198,7 +180,7 @@
 
     const { cols, rows } = t;
     Promise.all(unlisten)
-      .then(() => (dead ? undefined : invoke("pty_open", { id, cwd, cols, rows })))
+      .then(() => (dead ? undefined : invoke("pty_open", { id, cwd, cols, rows, theme: theme.dark ? "dark" : "light" })))
       .then(() => {
         if (dead) return invoke("pty_close", { id });
         sent = `${cols}x${rows}`;
@@ -230,7 +212,7 @@
 <div class="h-full p-2 {visible ? '' : 'hidden'}">
   <!-- Dezenter Primary-Schimmer, scheint durchs transparente Terminal. -->
   <div
-    class="h-full overflow-hidden rounded-xl px-3 py-2.5 shadow-lg ring-1 shadow-black/30 ring-white/5 transition-shadow duration-300 focus-within:ring-primary/40 focus-within:shadow-primary/10"
+    class="h-full overflow-hidden rounded-xl px-3 py-2.5 shadow-lg ring-1 shadow-black/10 dark:shadow-black/30 ring-foreground/5 transition-shadow duration-300 focus-within:ring-primary/40 focus-within:shadow-primary/10"
     style="background: radial-gradient(ellipse at top right, color-mix(in oklch, var(--primary) 8%, transparent), transparent 60%), var(--card);"
   >
     <div class="relative h-full">

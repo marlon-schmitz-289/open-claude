@@ -41,9 +41,13 @@
   import ZoomInIcon from "@lucide/svelte/icons/zoom-in";
   import IdleAmongUs from "$lib/components/IdleAmongUs.svelte";
   import Terminal from "$lib/components/Terminal.svelte";
+  import ActivityPanel from "$lib/components/ActivityPanel.svelte";
+  import Splitter, { stored } from "$lib/components/Splitter.svelte";
+  import WorkflowIcon from "@lucide/svelte/icons/workflow";
   import GitView from "$lib/components/git/GitView.svelte";
   import EditorView from "$lib/components/editor/EditorView.svelte";
-  import { devStop, drop, isDirty, open as openFile } from "$lib/editor.svelte";
+  import { drop, isDirty, open as openFile } from "$lib/editor.svelte";
+  import { runStop } from "$lib/run.svelte";
   import { editorDirty } from "$lib/files";
   import FileCodeIcon from "@lucide/svelte/icons/file-code";
   import CloneDialog from "$lib/components/git/CloneDialog.svelte";
@@ -121,6 +125,15 @@
   let sessions = $state<{ id: string; repo: Repo }[]>([]);
   let active = $state<string | null>(null);
   const activeSession = $derived(sessions.find((s) => s.id === active));
+  // Aktivitaets-Panel rechts neben dem Terminal: Breite und offen/zu ueberleben den Neustart.
+  let sideW = $state(stored("term.side", 360));
+  let side = $state(stored("term.side.open", 1) === 1);
+  function toggleSide() {
+    side = !side;
+    try {
+      localStorage.setItem("term.side.open", side ? "1" : "0");
+    } catch {}
+  }
   const running = $derived(new Set(sessions.map((s) => s.repo.path)));
   // Git-Ansicht ueberdeckt Liste und Terminal; Terminals laufen darunter weiter.
   let gitRepo = $state<Repo | null>(null);
@@ -846,6 +859,14 @@
       <Button
         variant="ghost"
         size="sm"
+        class="h-6 gap-1.5 text-[11px] {side ? 'text-foreground' : 'text-muted-foreground'}"
+        aria-pressed={side}
+        onclick={toggleSide}
+        title="Session, Workflows und Bilder"><WorkflowIcon class="size-3.5" /> Aktivität</Button
+      >
+      <Button
+        variant="ghost"
+        size="sm"
         class="text-muted-foreground mr-1 h-6 text-[11px]"
         onclick={() => endSession(activeSession.id)}>Sitzung beenden</Button
       >
@@ -1264,15 +1285,23 @@
       {/each}
     </div>
   {/if}
-  <div class="min-h-0 flex-1 {view === 'term' ? '' : 'hidden'}">
-    {#each sessions as s (s.id)}
-      <Terminal
-        id={s.id}
-        cwd={s.repo.path}
-        visible={s.id === active}
-        onexit={() => closeSession(s.id)}
-      />
-    {/each}
+  <div class="flex min-h-0 flex-1 {view === 'term' ? '' : 'hidden'}">
+    <div class="min-w-0 flex-1">
+      {#each sessions as s (s.id)}
+        <Terminal
+          id={s.id}
+          cwd={s.repo.path}
+          visible={s.id === active}
+          onexit={() => closeSession(s.id)}
+        />
+      {/each}
+    </div>
+    {#if side && activeSession && view === "term"}
+      <Splitter bind:size={sideW} invert min={260} max={720} key="term.side" />
+      <div class="min-h-0 shrink-0 py-2 pr-2" style="width:{sideW}px; max-width:50%">
+        <ActivityPanel cwd={activeSession.repo.path} id={activeSession.id} />
+      </div>
+    {/if}
   </div>
 
   {#if editRepo}

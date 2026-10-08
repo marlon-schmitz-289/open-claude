@@ -22,6 +22,9 @@ mod files;
 // Vorschau des Editors: preview-Schema, WPF-Helfer, Rueckfrage vor dem Beenden.
 mod preview;
 mod deps;
+mod activity;
+// Test-Explorer: Testlaeufe ohne PTY, Output zeilenweise ueber einen Channel.
+mod runner;
 
 #[derive(Serialize)]
 struct Repo {
@@ -590,8 +593,23 @@ pub fn run() {
             preview::editor_dirty,
             skills::skills_list,
             skills::skills_write_local,
-            skills::mods_list
+            skills::mods_list,
+            activity::claude_activity,
+            activity::claude_image,
+            activity::claude_agent_log,
+            runner::test_run,
+            runner::test_cancel
         ])
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("nav-guard")
+                .on_navigation(|w, url| {
+                    nav(url, w.app_handle().config().build.dev_url.as_ref()).unwrap_or_else(|| {
+                        let _ = open_system(url.as_str());
+                        false
+                    })
+                })
+                .build(),
+        )
         .setup(|app| tray(app.handle()).map_err(Into::into))
         // Mit Tray (macOS: immer) versteckt Schliessen nur — raus kommt man dann ueber das Tray-Menue.
         // Ohne Tray beendet Schliessen die App: bei ungespeicherten Aenderungen im Editor erst fragen.

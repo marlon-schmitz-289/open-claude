@@ -1,0 +1,21 @@
+{
+  "name": "Open Claude Dunkel",
+  "base": "dark",
+  "overrides": {
+    "claude": "#a793f4", "claudeShimmer": "#bfb1ff",
+    "permission": "#a793f4", "permissionShimmer": "#bfb1ff",
+    "suggestion": "#a793f4", "planMode": "#5fc9db",
+    "autoAccept": "#a793f4", "autoAcceptShimmer": "#bfb1ff",
+    "promptBorder": "#282b33", "promptBorderShimmer": "#a793f4", "bashBorder": "#e8be62",
+    "text": "#e5e8ed", "inverseText": "#0f0e17",
+    "inactive": "#8a8f99", "subtle": "#282b33",
+    "success": "#6fc884", "warning": "#e8be62", "error": "#eb8182",
+    "userMessageBackground": "#21242b", "userMessageBackgroundHover": "#262833",
+    "composerSidebarBackground": "#181b21", "selectionBg": "#262833",
+    "rate_limit_fill": "#a793f4", "rate_limit_empty": "#282b33",
+    "briefLabelClaude": "#a793f4",
+    "diffAdded": "#14361d", "diffRemoved": "#472021",
+    "diffAddedDimmed": "#152619", "diffRemovedDimmed": "#311b1b",
+    "diffAddedWord": "#1b552c", "diffRemovedWord": "#703133"
+  }
+}

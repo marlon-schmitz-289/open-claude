@@ -37,7 +37,7 @@ pub struct SkillsInfo {
 const VALUES: [&str; 4] = ["on", "off", "user-invocable-only", "name-only"];
 
 /// Home wie default_root in lib.rs.
-fn home() -> PathBuf {
+pub(crate) fn home() -> PathBuf {
     PathBuf::from(std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_default())
 }
 
