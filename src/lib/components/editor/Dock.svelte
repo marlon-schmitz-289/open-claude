@@ -85,11 +85,17 @@
   }
 
   function down(e: PointerEvent, id: PanelId) {
+    dragged = false;
     // Mittelklick schliesst (onauxclick); ohne preventDefault startet Windows den Autoscroll.
     if (e.button === 1) return e.preventDefault();
     // Auf dem x nicht fangen, sonst landet dessen Klick auf dem Tab.
     if (e.button !== 0 || (e.target as Element).closest("button")) return;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    // Sonst startet der Browser eine Textauswahl, die beim Ziehen ueber Editor und Panels mitlaeuft.
+    // Damit entfaellt auch der Fokus beim Druecken, daher selbst setzen (Pfeiltasten im Tablist).
+    e.preventDefault();
+    const tab = e.currentTarget as HTMLElement;
+    tab.focus();
+    tab.setPointerCapture(e.pointerId);
     drag = { id, x: e.clientX, y: e.clientY, on: false };
   }
 
@@ -100,9 +106,13 @@
     hint = aim(e.clientX, e.clientY);
   }
 
+  /** Nach echtem Ziehen den folgenden click schlucken, sonst meldet select() die alte Gruppe. */
+  let dragged = false;
+
   function up() {
     const [d, h] = [drag, hint];
     drag = hint = null;
+    dragged = !!d?.on;
     if (!d?.on || !h) return;
     const next =
       h.index !== undefined
@@ -181,7 +191,7 @@
             onpointerdown={(e) => down(e, id)}
             onpointermove={move}
             onpointerup={up}
-            onclick={() => select(id, n.id)}
+            onclick={() => (dragged ? (dragged = false) : select(id, n.id))}
             onauxclick={(e) => e.button === 1 && t.closable !== false && onclose(id)}
             onkeydown={(e) => key(e, n, id)}
           >
@@ -231,7 +241,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   bind:this={root}
-  class="relative flex h-full min-h-0 w-full text-xs {drag?.on ? 'cursor-grabbing' : ''}"
+  class="relative flex h-full min-h-0 w-full text-xs {drag?.on ? 'cursor-grabbing select-none' : ''}"
   onpointerdown={(e) => (sizing = !!(e.target as Element).closest('[role="separator"]'))}
   onlostpointercapture={() => {
     drag = hint = null;
