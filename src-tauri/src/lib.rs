@@ -12,6 +12,8 @@ use walkdir::WalkDir;
 mod pty;
 // GitHub/GitLab: Konten, Repos, PRs, Klonen.
 mod forge;
+// Neue Repos anlegen (Scaffold, git init, erster Commit).
+mod create;
 // Git-Client ueber die git-CLI.
 mod git;
 // Unity-Projekte ueber die unity-CLI.
@@ -562,6 +564,9 @@ pub fn run() {
             forge::forge_jobs,
             forge::forge_run_action,
             forge::forge_clone,
+            forge::forge_create_remote,
+            create::repo_langs,
+            create::repo_create,
             forge::forge_repo_account,
             forge::forge_set_repo_account,
             forge::open_url,

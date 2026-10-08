@@ -692,6 +692,17 @@ fn commit(repo: &str, message: &str, amend: bool) -> Result<String, String> {
         .to_string())
 }
 
+/// Neues Repo mit Branch main; geht auch im leeren, frisch angelegten Ordner.
+pub(crate) fn init(dest: &str) -> Result<(), String> {
+    out(git(dest).args(["init", "-q", "-b", "main"])).map(|_| ())
+}
+
+/// Alles stagen und committen.
+pub(crate) fn commit_all(repo: &str, msg: &str) -> Result<String, String> {
+    out(git(repo).args(["add", "-A"]))?;
+    commit(repo, msg, false)
+}
+
 fn checkout(repo: &str, target: &str, create: bool, start: Option<&str>) -> Result<String, String> {
     if create {
         let mut cmd = git(repo);
@@ -793,6 +804,12 @@ fn push(repo: &str, force: bool) -> Result<String, String> {
         cmd.args(["-u", remote.name.as_str(), branch.as_str()]);
     }
     talk(&mut cmd)
+}
+
+/// origin setzen und erster Push (push() setzt -u selbst).
+pub(crate) fn publish(repo: &str, url: &str) -> Result<String, String> {
+    out(git(repo).args(["remote", "add", "--", "origin", url]))?;
+    push(repo, false)
 }
 
 /// Wirksamer Wert (lokal oder global), None = nicht gesetzt oder leer.
@@ -1664,6 +1681,20 @@ refs/remotes/origin/feature/x\x1f \x1f\x1f\x1fs3\x1fd\x1fsub: mit doppelpunkt\n"
 
         let _ = std::fs::remove_dir_all(&bare);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_setzt_origin_und_upstream() {
+        let (_t, r) = fresh("publish");
+        ci(&r, "a.txt", "a", "eins");
+        let b = format!("{r}-remote.git");
+        let _ = std::fs::remove_dir_all(&b);
+        let _tb = Tmp(PathBuf::from(&b));
+        out(git(&r).args(["init", "-q", "--bare", &b])).unwrap();
+        publish(&r, &b).unwrap();
+        assert!(ok(git(&b).args(["rev-parse", "--verify", "--quiet", "refs/heads/main"])));
+        assert_eq!(status(&r).unwrap().upstream.as_deref(), Some("origin/main"));
+        assert!(publish(&r, &b).is_err());
     }
 
     #[test]

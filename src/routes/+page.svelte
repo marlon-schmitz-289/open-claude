@@ -53,6 +53,7 @@
   import { editorDirty } from "$lib/files";
   import FileCodeIcon from "@lucide/svelte/icons/file-code";
   import CloneDialog from "$lib/components/git/CloneDialog.svelte";
+  import CreateDialog from "$lib/components/git/CreateDialog.svelte";
   import AccountsDialog from "$lib/components/git/AccountsDialog.svelte";
   import { git, forge, type Account } from "$lib/git";
   import { unity, unityBadgeText, type UnityInfo } from "$lib/unity";
@@ -61,6 +62,7 @@
   import { sync, touched, profileFor, managed, pkey, emptyProject, type SkillStore, type ProjectSkills } from "$lib/skills";
   import SparklesIcon from "@lucide/svelte/icons/sparkles";
   import DownloadIcon from "@lucide/svelte/icons/download";
+  import FolderPlusIcon from "@lucide/svelte/icons/folder-plus";
   import UsersIcon from "@lucide/svelte/icons/users";
 
   type Repo = {
@@ -149,6 +151,7 @@
     editorDirty(isDirty()).catch(() => {});
   });
   let cloneOpen = $state(false);
+  let createOpen = $state(false);
   let accountsOpen = $state(false);
   let accounts = $state<Account[]>([]);
   let skillStore = $state<SkillStore>({ profiles: {}, kindProfiles: {}, projects: {} });
@@ -789,12 +792,12 @@
     if (e.key === "Escape" && (overlayOnEsc || e.defaultPrevented)) return;
     const ctrl = e.ctrlKey || e.metaKey;
     if (e.key === "F1" || (ctrl && e.key === "/")) {
-      if (!cloneOpen && !accountsOpen && !setup && !profilesOpen) help = !help;
+      if (!cloneOpen && !createOpen && !accountsOpen && !setup && !profilesOpen) help = !help;
       e.preventDefault();
       return;
     }
-    // Offene Dialoge (Hilfe, Klonen, Konten) bekommen ihre Tasten selbst.
-    if (help || cloneOpen || accountsOpen || setup || doomed || profilesOpen) return;
+    // Offene Dialoge (Hilfe, Klonen, Anlegen, Konten) bekommen ihre Tasten selbst.
+    if (help || cloneOpen || createOpen || accountsOpen || setup || doomed || profilesOpen) return;
 
     if (ctrl && e.key >= "1" && e.key <= "9") {
       launch(flat[Number(e.key) - 1]?.repo);
@@ -812,6 +815,8 @@
       if (current) togglePin(current.repo.path);
     } else if (ctrl && e.key.toLowerCase() === "g") {
       openGit(current?.repo);
+    } else if (ctrl && e.shiftKey && e.key.toLowerCase() === "n") {
+      createOpen = true;
     } else if (ctrl && e.key.toLowerCase() === "n") {
       cloneOpen = true;
     } else if (ctrl && e.key.toLowerCase() === "t") {
@@ -1047,6 +1052,9 @@
           aria-label="Claude ohne Projekt starten"
         >
           <TerminalIcon class="size-4" />
+        </Button>
+        <Button variant="ghost" size="icon" onclick={() => (createOpen = true)} title="Neues Repo (Strg+Shift+N)" aria-label="Neues Repo">
+          <FolderPlusIcon class="size-4" />
         </Button>
         <Button variant="ghost" size="icon" onclick={() => (cloneOpen = true)} title="Repo klonen (Strg+N)" aria-label="Repo klonen">
           <DownloadIcon class="size-4" />
@@ -1509,6 +1517,7 @@
         ["Strg + G", "Git-Ansicht öffnen"],
         ["Strg + ⇧ + E", "Editor öffnen"],
         ["Strg + N", "Repo klonen"],
+        ["Strg + ⇧ + N", "Neues Repo anlegen"],
         ["Strg + K", "Suche fokussieren"],
         ["Strg + P", "Projekt anpinnen"],
         ["Strg + E", "Ordner im Explorer öffnen"],
@@ -1620,6 +1629,16 @@
   onclone={cloned}
   onaccounts={() => {
     cloneOpen = false;
+    accountsOpen = true;
+  }}
+/>
+<CreateDialog
+  bind:open={createOpen}
+  {accounts}
+  {root}
+  oncreate={cloned}
+  onaccounts={() => {
+    createOpen = false;
     accountsOpen = true;
   }}
 />

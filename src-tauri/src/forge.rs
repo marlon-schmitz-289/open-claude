@@ -309,7 +309,14 @@ fn api_error(host: &str, status: reqwest::StatusCode, body: &Value) -> String {
     if status == reqwest::StatusCode::UNAUTHORIZED {
         return format!("{host}: Token ungültig oder abgelaufen (401)");
     }
-    let msg = body["message"].as_str().or(body["error"].as_str()).unwrap_or("");
+    // GitHub 422: Grund in errors[0].message; GitLab 400: message als Objekt {"name":["…"]}.
+    let obj = body["message"].is_object().then(|| body["message"].to_string());
+    let msg = body["errors"][0]["message"]
+        .as_str()
+        .or(body["message"].as_str())
+        .or(body["error"].as_str())
+        .or(obj.as_deref())
+        .unwrap_or("");
     // GitLab schickt z. B. {"message":"403 Forbidden"}, das stuende sonst doppelt da.
     let msg = if status.to_string().contains(msg) { "" } else { msg };
     let hint = if status == reqwest::StatusCode::FORBIDDEN { " (Token ohne Rechte?)" } else { "" };
@@ -626,7 +633,7 @@ fn unix_secs(ts: &str) -> Option<i64> {
     Some(days * 86400 + h * 3600 + mi * 60 + se - off)
 }
 
-fn now_secs() -> i64 {
+pub(crate) fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
@@ -1073,6 +1080,43 @@ pub async fn forge_set_repo_account(app: AppHandle, repo: String, account: Optio
     Ok(repo_account(&app, &repo))
 }
 
+/// (Pfad, Body) fuer ein neues persoenliches Repo.
+fn create_req(kind: &str, name: &str, private: bool) -> (&'static str, Value) {
+    let vis = if private { "private" } else { "public" };
+    if kind == "github" {
+        ("/user/repos", serde_json::json!({"name": name, "private": private}))
+    } else {
+        ("/projects", serde_json::json!({"name": name, "path": name, "visibility": vis}))
+    }
+}
+
+/// Antwort -> (https-Clone-URL, Web-URL).
+fn created(kind: &str, r: &Value) -> (String, String) {
+    if kind == "github" {
+        (s(&r["clone_url"]), s(&r["html_url"]))
+    } else {
+        (s(&r["http_url_to_repo"]), s(&r["web_url"]))
+    }
+}
+
+/// Remote mit dem am Repo gebundenen Konto anlegen, origin setzen, pushen. Liefert die Web-URL.
+#[tauri::command]
+pub async fn forge_create_remote(app: AppHandle, repo: String, name: String, private: bool) -> Result<String, String> {
+    let id = crate::git::config(&repo, "ocui.account").ok_or("Kein Konto am Repo")?;
+    let (kind, host, user) = parse_account(&id).ok_or_else(|| format!("Ungültiges Konto: {id}"))?;
+    let tok = token(kind, &host, &user, &known(&app))?.ok_or_else(|| format!("Kein Token für {id}"))?;
+    let (path, body) = create_req(kind, &name, private);
+    let r = api(kind, &host, &tok, reqwest::Method::POST, path, &[], Some(&body)).await?;
+    let (url, web) = created(kind, &r);
+    if !url.starts_with("https://") {
+        return Err(format!("{host}: keine Clone-URL in der Antwort"));
+    }
+    crate::git::blocking(move || crate::git::publish(&repo, &url))
+        .await
+        .map_err(|e| format!("{web} angelegt, Push fehlgeschlagen: {e}"))?;
+    Ok(web)
+}
+
 /// Nur http(s): sonst koennte explorer/open/xdg-open beliebige Programme oder Pfade oeffnen.
 fn valid_url(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
@@ -1209,6 +1253,28 @@ mod tests {
         assert_eq!(e, "github.com antwortet mit 404 Not Found");
         let e = api_error("github.com", S::UNPROCESSABLE_ENTITY, &serde_json::json!({"message": "Validation Failed"}));
         assert!(e.ends_with("Validation Failed"), "{e}");
+        let body = json!({"message": "Repository creation failed.", "errors": [{"message": "name already exists on this account"}]});
+        let e = api_error("github.com", S::UNPROCESSABLE_ENTITY, &body);
+        assert_eq!(e, "github.com antwortet mit 422 Unprocessable Entity name already exists on this account");
+        let e = api_error("gitlab.com", S::BAD_REQUEST, &json!({"message": {"name": ["has already been taken"]}}));
+        assert_eq!(e, r#"gitlab.com antwortet mit 400 Bad Request {"name":["has already been taken"]}"#);
+    }
+
+    #[test]
+    fn baut_create_anfrage() {
+        assert_eq!(create_req("github", "x", true), ("/user/repos", json!({"name": "x", "private": true})));
+        assert_eq!(create_req("github", "x", false), ("/user/repos", json!({"name": "x", "private": false})));
+        let gl = |v: &str| json!({"name": "x", "path": "x", "visibility": v});
+        assert_eq!(create_req("gitlab", "x", true), ("/projects", gl("private")));
+        assert_eq!(create_req("gitlab", "x", false), ("/projects", gl("public")));
+    }
+
+    #[test]
+    fn liest_angelegtes_repo() {
+        let gh = json!({"clone_url": "https://github.com/o/x.git", "html_url": "https://github.com/o/x"});
+        assert_eq!(created("github", &gh), ("https://github.com/o/x.git".into(), "https://github.com/o/x".into()));
+        let gl = json!({"http_url_to_repo": "https://gitlab.com/o/x.git", "web_url": "https://gitlab.com/o/x"});
+        assert_eq!(created("gitlab", &gl), ("https://gitlab.com/o/x.git".into(), "https://gitlab.com/o/x".into()));
     }
 
     #[test]

@@ -150,6 +150,7 @@ export const git = {
 
 export type ForgeKind = "github" | "gitlab";
 
+export type RepoLang = { id: string; label: string; tool: string | null; found: boolean };
 /** Token liegt im Windows-Anmeldeinfo-Speicher, nie im Store. */
 export type Account = { kind: ForgeKind; host: string; user: string; avatar: string | null };
 
@@ -301,6 +302,14 @@ export const forge = {
   /** Klont nach dest; Fortschritt als Event `clone:{id}` (CloneProgress). Liefert den Zielpfad. account = Konto-ID fuer den Token. */
   clone: (id: string, url: string, dest: string, account: string | null) =>
     call<string>("forge_clone", { id, url, dest, account }),
+  /** Sprachen fuer neue Repos; found = Scaffold-Tool im PATH. */
+  langs: () => call<RepoLang[]>("repo_langs", {}),
+  /** Legt lokal an (Ordner, Scaffold, .gitignore, README, LICENSE, git init -b main, Commit). Liefert dest. account = Konto-ID, wird vor dem Commit gebunden. */
+  create: (dest: string, name: string, lang: string, mit: boolean, account: string | null) =>
+    call<string>("repo_create", { dest, name, lang, mit, account }),
+  /** Remote mit dem am Repo gebundenen Konto anlegen, origin setzen, pushen. Liefert die Web-URL. */
+  createRemote: (repo: string, name: string, private_: boolean) =>
+    call<string>("forge_create_remote", { repo, name, private: private_ }),
   /** Oeffnet eine URL im Standardbrowser. */
   openUrl: (url: string) => call<void>("open_url", { url }),
   /** Browser-URL zu einem Remote (ssh/scp -> https); null, wenn nicht erkennbar. */
