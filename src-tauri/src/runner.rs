@@ -433,9 +433,14 @@ mod tests {
         Scope::All { files: vec![] }
     }
 
+    /// Reporter-Pfad wie im Code gebaut (unter Windows mit \\).
+    fn rep(f: &str) -> String {
+        Path::new("/cache/rep").join(f).to_string_lossy().into_owned()
+    }
+
     #[test]
     fn vitest_kommandos() {
-        let base = ["run", "--reporter=/cache/rep/vitest.mjs", "--includeTaskLocation"];
+        let base = ["run".to_string(), format!("--reporter={}", rep("vitest.mjs")), "--includeTaskLocation".into()];
         let (p, a) = cmd(Fw::Vitest, all()).unwrap();
         assert_eq!(p, "/p/node_modules/.bin/tool");
         assert_eq!(a, base);
@@ -449,7 +454,7 @@ mod tests {
     #[test]
     fn jest_kommandos() {
         let (_, a) = cmd(Fw::Jest, test("a.test.js", "s > t.x", false)).unwrap();
-        assert_eq!(a[0], "--reporters=/cache/rep/jest.cjs");
+        assert_eq!(a[0], format!("--reporters={}", rep("jest.cjs")));
         assert_eq!(a[4..], ["--runTestsByPath", "a.test.js", "-t", "^s t\\.x( |$)"]);
         assert_eq!(cmd(Fw::Jest, file("a.test.js")).unwrap().1[4..], ["--runTestsByPath", "a.test.js"]);
     }
@@ -458,7 +463,7 @@ mod tests {
     fn node_kommandos() {
         let (p, a) = cmd(Fw::Node, Scope::All { files: vec!["a.test.ts".into(), "b.test.ts".into()] }).unwrap();
         assert_eq!(p, "node");
-        assert_eq!(a, ["--test", "--test-reporter=/cache/rep/node.mjs", "a.test.ts", "b.test.ts"]);
+        assert_eq!(a, ["--test".to_string(), format!("--test-reporter={}", rep("node.mjs")), "a.test.ts".into(), "b.test.ts".into()]);
         let many = Scope::All { files: (0..400).map(|i| format!("t{i}.test.ts")).collect() };
         assert_eq!(cmd(Fw::Node, many).unwrap().1.len(), 2);
         let (_, a) = cmd(Fw::Node, test("a.test.ts", "suite > bad", true)).unwrap();
