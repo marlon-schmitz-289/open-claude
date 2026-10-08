@@ -2,6 +2,7 @@
 // Andocken neu gemountet und die Editor-Ansicht beim Wechsel zu Terminal/Git abgebaut, Puffer bleiben trotzdem.
 // Gespeichert (localStorage "editor:<repo>", JSON, try/catch): layout, active, expanded, pin, url, wpf, run.
 // Ungespeicherte Inhalte ueberleben keinen Neustart der App.
+import { confirm } from "./confirm.svelte";
 import { untrack } from "svelte";
 import type { EditorState, StateEffect } from "@codemirror/state";
 import {
@@ -228,10 +229,10 @@ export async function open(repo: string, path: string, line?: number): Promise<v
   }
 }
 
-/** Tab einer Datei schliessen. Bei ungespeicherten Aenderungen erst window.confirm, ausser force. false = abgebrochen. */
-export function close(repo: string, path: string, force = false): boolean {
+/** Tab einer Datei schliessen. Bei ungespeicherten Aenderungen erst nachfragen, ausser force. false = abgebrochen. */
+export async function close(repo: string, path: string, force = false): Promise<boolean> {
   const s = editor(repo);
-  if (!force && s.files[path]?.dirty && !window.confirm(`Ungespeicherte Änderungen in „${name(path)}“ verwerfen?`))
+  if (!force && s.files[path]?.dirty && !(await confirm(`Ungespeicherte Änderungen in „${name(path)}“ verwerfen?`, "Verwerfen")))
     return false;
   forget(s, path);
   persist(s);
@@ -239,7 +240,7 @@ export function close(repo: string, path: string, force = false): boolean {
 }
 
 /** Beliebiges Panel schliessen (Docks onclose): Dateien ueber close(), die anderen direkt. false = abgebrochen. */
-export function closeTab(repo: string, panel: PanelId): boolean {
+export async function closeTab(repo: string, panel: PanelId): Promise<boolean> {
   const path = panelPath(panel);
   if (path !== null) return close(repo, path);
   const s = editor(repo);
@@ -541,13 +542,13 @@ export function isDirty(repo?: string): boolean {
 }
 
 /**
- * Editor des Projekts schliessen (zurueck zur Liste): fragt bei ungespeicherten Aenderungen (window.confirm),
+ * Editor des Projekts schliessen (zurueck zur Liste): fragt bei ungespeicherten Aenderungen nach (confirm),
  * (ausser force), verwirft dann die Puffer; Layout und offene Tabs bleiben gespeichert. false = abgebrochen.
  * Der Wechsel zu Terminal oder Git ruft das NICHT.
  */
-export function drop(repo: string, force = false): boolean {
+export async function drop(repo: string, force = false): Promise<boolean> {
   if (!store.has(repo)) return true;
-  if (!force && isDirty(repo) && !window.confirm("Ungespeicherte Änderungen im Editor verwerfen?")) return false;
+  if (!force && isDirty(repo) && !(await confirm("Ungespeicherte Änderungen im Editor verwerfen?", "Verwerfen"))) return false;
   void runStop(repo);
   for (const key of [...snapshots.keys()]) if (key.startsWith(snapKey(repo, ""))) snapshots.delete(key);
   store.delete(repo);

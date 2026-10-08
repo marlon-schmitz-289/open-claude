@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { confirm } from "$lib/confirm.svelte";
   import type { Store } from "@tauri-apps/plugin-store";
   import { forge, type Account, type ForgeKind } from "$lib/git";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
@@ -109,7 +110,7 @@
               size="icon"
               class="text-muted-foreground hover:text-destructive size-6"
               disabled={busy}
-              onclick={() => window.confirm(`Konto ${a.user}@${a.host} entfernen? Der Token wird gelöscht.`) && logout(a)}
+              onclick={async () => (await confirm(`Konto ${a.user}@${a.host} entfernen? Der Token wird gelöscht.`, "Entfernen")) && logout(a)}
               aria-label="Konto entfernen"
             >
               <TrashIcon class="size-3.5" />

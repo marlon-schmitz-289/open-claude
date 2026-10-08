@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { confirm as ask } from "$lib/confirm.svelte";
   import Notice from "$lib/components/Notice.svelte";
   import { ConfirmDialog, PromptDialog, Tabs, menuContent, menuItem, menuSeparator } from "$lib/components/kit";
   import { tick, untrack } from "svelte";
@@ -103,8 +104,8 @@
 
   let mergeDirty = $state(false);
   /** Offener Merge-Editor mit Entscheidungen: erst nachfragen. */
-  export function canLeave() {
-    return !conflictPath || !mergeDirty || window.confirm("Merge-Editor schließen? Entscheidungen gehen verloren.");
+  export async function canLeave() {
+    return !conflictPath || !mergeDirty || (await ask("Merge-Editor schließen? Entscheidungen gehen verloren.", "Schließen"));
   }
 
   $effect(() => {
@@ -203,7 +204,7 @@
 
   /** Gleiche Ref zweimal anklicken soll erneut springen, daher kurz auf null. */
   async function selectRef(ref: string) {
-    if (!canLeave()) return;
+    if (!(await canLeave())) return;
     conflictPath = null;
     tab = "history";
     jumpTo = null;

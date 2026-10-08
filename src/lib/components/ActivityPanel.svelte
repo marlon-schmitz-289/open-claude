@@ -5,6 +5,7 @@
 </script>
 
 <script lang="ts">
+  import { confirm } from "$lib/confirm.svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
@@ -170,7 +171,7 @@
     wfOpen = true;
   }
   async function deleteTemplate(f: WfFile, name: string) {
-    if (!window.confirm(`Vorlage „${name}“ löschen?`)) return;
+    if (!(await confirm(`Vorlage „${name}“ löschen?`, "Löschen"))) return;
     try {
       await invoke("workflows_delete", { cwd, scope: f.scope, file: f.file });
       loadTemplates();

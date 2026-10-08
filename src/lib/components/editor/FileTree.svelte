@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { confirm } from "$lib/confirm.svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { ContextMenu } from "bits-ui";
   import Notice from "$lib/components/Notice.svelte";
@@ -95,10 +96,10 @@
     });
   }
 
-  function remove(r: Row) {
+  async function remove(r: Row) {
     const dirty = Object.values(s.files).some((f) => f.dirty && under(f.path, r.path));
     const message = `„${r.path}“ in den Papierkorb legen?${dirty ? "\nUngespeicherte Änderungen im Editor gehen verloren." : ""}`;
-    if (!window.confirm(message)) return;
+    if (!(await confirm(message, "Löschen"))) return;
     run(async () => {
       await fs.delete(repo, r.path);
       removed(repo, r.path);

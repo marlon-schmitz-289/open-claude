@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { confirm } from "$lib/confirm.svelte";
   import Notice from "$lib/components/Notice.svelte";
   import { tick } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
@@ -109,14 +110,14 @@
   $effect(() => {
     dirty = editing || modified || choices.some(Boolean);
   });
-  const discardOk = () => !dirty || confirm("Entscheidungen und Änderungen im Merge-Editor verwerfen?");
+  const discardOk = async () => !dirty || (await confirm("Entscheidungen und Änderungen im Merge-Editor verwerfen?", "Verwerfen"));
 
-  function cancel() {
-    if (discardOk()) onclose(false);
+  async function cancel() {
+    if (await discardOk()) onclose(false);
   }
 
-  function whole(text: string | null) {
-    if (text === null || !discardOk()) return;
+  async function whole(text: string | null) {
+    if (text === null || !(await discardOk())) return;
     editing = false;
     modified = false;
     load(text);

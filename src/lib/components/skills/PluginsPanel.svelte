@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { confirm } from "$lib/confirm.svelte";
   import Notice from "$lib/components/Notice.svelte";
   import { RefreshButton, SectionHead, Segmented, Switch } from "$lib/components/kit";
   import { untrack, type Snippet } from "svelte";
@@ -40,7 +41,7 @@
     const shown = res.shownCommand;
     if (shown?.sha256) {
       const cmd = JSON.stringify(shown.command ?? shown);
-      if (!window.confirm(`Der Marketplace will dieses Kommando ausführen:\n${cmd}\nZulassen?`)) return null;
+      if (!(await confirm(`Der Marketplace will dieses Kommando ausführen:\n${cmd}`, "Zulassen"))) return null;
       res = await skills.pluginRun(cwd, action, target, scope, shown.sha256);
     }
     if (res.outcome !== "ok") throw res.message ?? JSON.stringify(res);
@@ -89,8 +90,8 @@
   const folder = (p?: string) => p?.split(/[\\/]/).filter(Boolean).pop() ?? p ?? "";
   const SCOPE = { user: "User", project: "Projekt", local: "lokal" };
 
-  function remove(p: InstalledPlugin) {
-    if (!window.confirm(`${p.id} aus ${SCOPE[p.scope]} entfernen? Gespeicherte Plugin-Daten werden gelöscht.`)) return;
+  async function remove(p: InstalledPlugin) {
+    if (!(await confirm(`${p.id} aus ${SCOPE[p.scope]} entfernen? Gespeicherte Plugin-Daten werden gelöscht.`, "Entfernen"))) return;
     run("uninstall", p.id, p.scope, p.projectPath ?? repo);
   }
 
@@ -228,8 +229,8 @@
             <span class="w-48 shrink-0 truncate font-mono text-[11px] font-semibold">{name}</span>
             <span class="text-muted-foreground min-w-0 flex-1 truncate text-[11px]" title={mp.installLocation}>{mpSource(mp.source)}</span>
             {@render action("Aktualisieren", name, () => run("mp-update", name))}
-            {@render action("Entfernen", name, () => {
-              if (window.confirm(`Marketplace ${name} entfernen? Seine Plugins sind danach nicht mehr installierbar.`)) run("mp-remove", name);
+            {@render action("Entfernen", name, async () => {
+              if (await confirm(`Marketplace ${name} entfernen? Seine Plugins sind danach nicht mehr installierbar.`, "Entfernen")) run("mp-remove", name);
             })}
           </li>
         {/each}

@@ -19,7 +19,8 @@
   import FolderIcon from "@lucide/svelte/icons/folder";
   import SunMoonIcon from "@lucide/svelte/icons/sun-moon";
   import { theme, setMode } from "$lib/theme.svelte";
-  import { Segmented, menuContent, menuItem, menuSeparator } from "$lib/components/kit";
+  import { ConfirmDialog, Segmented, menuContent, menuItem, menuSeparator } from "$lib/components/kit";
+  import { answer, confirm, confirming } from "$lib/confirm.svelte";
   import RefreshIcon from "@lucide/svelte/icons/refresh-cw";
   import GitBranchIcon from "@lucide/svelte/icons/git-branch";
   import KeyboardIcon from "@lucide/svelte/icons/keyboard";
@@ -388,7 +389,7 @@
 
   async function installUpdate() {
     // Der Neustart laeuft an der Rueckfrage in Rust vorbei.
-    if (isDirty() && !window.confirm("Ungespeicherte Änderungen im Editor verwerfen und neu starten?")) return;
+    if (isDirty() && !(await confirm("Ungespeicherte Änderungen im Editor verwerfen und neu starten?", "Neu starten"))) return;
     updating = true;
     try {
       await update!.downloadAndInstall();
@@ -534,7 +535,7 @@
   /** Offene Session des Projekts zeigen, sonst eine neue starten. */
   async function launch(repo?: Repo) {
     if (!repo) return;
-    if (gitRepo && gitView && !gitView.canLeave()) return;
+    if (gitRepo && gitView && !(await gitView.canLeave())) return;
     // Vor dem Start schreiben, damit claude die Skills schon sieht; ein Fehler haelt den Start nicht auf.
     // Nie konfigurierte Projekte bleiben unberuehrt.
     if (!isFree(repo) && !running.has(repo.path) && managed(skillStore, repo.path, repo.kind)) await syncSkills([repo.path]);
@@ -566,9 +567,9 @@
   }
 
   /** Editor-Ansicht fuer das Projekt; Terminal laeuft weiter, ungespeicherte Puffer bleiben beim Wechsel erhalten. */
-  function openEdit(repo?: Repo) {
+  async function openEdit(repo?: Repo) {
     if (!repo || isFree(repo)) return;
-    if (gitRepo && gitView && !gitView.canLeave()) return;
+    if (gitRepo && gitView && !(await gitView.canLeave())) return;
     leaveGit();
     active = null;
     editRepo = repo;
@@ -713,9 +714,9 @@
   }
 
   async function back() {
-    if (gitRepo && gitView && !gitView.canLeave()) return;
+    if (gitRepo && gitView && !(await gitView.canLeave())) return;
     // Zurueck zur Liste schliesst den Editor des Projekts: bei ungespeicherten Aenderungen fragt drop nach.
-    if (editRepo && !drop(editRepo.path)) return;
+    if (editRepo && !(await drop(editRepo.path))) return;
     // Aus Terminal oder Git heraus bleibt der Editor-Zustand, aber kein Prozess ohne sichtbaren Stopp-Knopf.
     if (viewRepo) void runStop(viewRepo.path);
     editRepo = null;
@@ -726,8 +727,8 @@
   }
 
   /** Per Klick beenden: claude arbeitet evtl. noch, daher nachfragen. */
-  function endSession(id: string) {
-    if (window.confirm("Sitzung beenden? Ein laufender claude-Prozess wird abgebrochen.")) closeSession(id);
+  async function endSession(id: string) {
+    if (await confirm("Sitzung beenden? Ein laufender claude-Prozess wird abgebrochen.", "Beenden")) closeSession(id);
   }
 
   /** Aus der Liste nehmen; der Terminal-Unmount schliesst die PTY. */
@@ -1627,3 +1628,16 @@
     accountsOpen = true;
   }}
 />
+
+<!-- Ein Dialog fuer alle Rueckfragen aus confirm() (window.confirm geht in der Webview nicht). Zuletzt im Markup,
+     damit er ueber anderen offenen Dialogen liegt. -->
+<ConfirmDialog
+  open={!!confirming.q}
+  title={confirming.q?.title ?? ""}
+  action={confirming.q?.action ?? ""}
+  onconfirm={() => answer(true)}
+  oncancel={() => answer(false)}
+>
+  <p class="text-muted-foreground text-sm break-words whitespace-pre-line">{confirming.q?.message}</p>
+</ConfirmDialog>
+
