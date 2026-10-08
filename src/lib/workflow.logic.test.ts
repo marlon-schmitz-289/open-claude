@@ -202,7 +202,8 @@ test("Skill-Beispiel ist exakt Generator-Ausgabe", () => {
       import.meta.url,
     ),
     "utf8",
-  );
+    // Windows-Checkout (autocrlf) liefert CRLF
+  ).replace(/\r\n/g, "\n");
   const js = md.match(/```js\n([\s\S]*?)```/)![1];
   const t = fromScript(js);
   assert.ok(t);
