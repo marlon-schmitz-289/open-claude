@@ -28,6 +28,7 @@ import {
 import { KONFLIKT, fs, isBinaryImage, previewAllow } from "./files.ts";
 import { moved, under, verdict } from "./editor.logic.ts";
 import { runStop } from "./run.svelte.ts";
+import { BUILTIN, type Profile } from "./run.logic.ts";
 import { rescan } from "./testing.svelte.ts";
 
 /** Platte weicht vom Puffer ab, waehrend lokale Aenderungen offen sind. */
@@ -67,6 +68,9 @@ export type RepoEditor = {
   wpf: boolean;
   /** Zuletzt gewaehltes Startziel der Run-Leiste (RunConfig.label); null = Vorauswahl. */
   run: string | null;
+  /** Gewaehltes Build-Profil (Profile.name) und die eigenen Profile dieses Projekts. */
+  profile: string;
+  profiles: Profile[];
   /** Aufgeklappte Ordner im Baum. */
   expanded: string[];
   /** mtime der beobachteten Ordner ("" = Projektordner + expanded). Aendert sich ein Wert, liest der Baum den Ordner neu. */
@@ -99,8 +103,8 @@ const NEVER = "\0";
 
 function persist(s: RepoEditor) {
   try {
-    const { layout, active, expanded, pin, url, wpf, run } = s;
-    localStorage.setItem(`editor:${s.repo}`, JSON.stringify({ layout, active, expanded, pin, url, wpf, run }));
+    const { layout, active, expanded, pin, url, wpf, run, profile, profiles } = s;
+    localStorage.setItem(`editor:${s.repo}`, JSON.stringify({ layout, active, expanded, pin, url, wpf, run, profile, profiles }));
   } catch {
     // Ohne localStorage gilt das Layout nur fuer diese Sitzung.
   }
@@ -182,6 +186,10 @@ export function editor(repo: string): RepoEditor {
     url: str(p.url) ?? "",
     wpf: p.wpf === true,
     run: str(p.run),
+    profile: str(p.profile) ?? "Debug",
+    profiles: Array.isArray(p.profiles)
+      ? p.profiles.filter((x): x is Profile => typeof x?.name === "string" && Array.isArray(x.args) && x.args.every((a: unknown) => typeof a === "string"))
+      : [],
     expanded: Array.isArray(p.expanded) ? p.expanded.filter((d) => typeof d === "string") : [],
     dirs: {},
     error: "",
@@ -443,6 +451,20 @@ export function setUrl(repo: string, url: string): void {
 export function setRun(repo: string, label: string): void {
   const s = editor(repo);
   s.run = label;
+  persist(s);
+}
+
+/** Build-Profil waehlen bzw. die eigenen Profile ersetzen und speichern. */
+export function setProfile(repo: string, name: string): void {
+  const s = editor(repo);
+  s.profile = name;
+  persist(s);
+}
+
+export function setProfiles(repo: string, list: Profile[]): void {
+  const s = editor(repo);
+  s.profiles = list;
+  if (![...BUILTIN, ...list].some((p) => p.name === s.profile)) s.profile = "Debug";
   persist(s);
 }
 

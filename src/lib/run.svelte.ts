@@ -5,7 +5,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { RUN, activate, groupOf, mainGroup, splitAt } from "./dock.ts";
 import { fs, ptyClose, ptyWrite, runStart as startCmd } from "./files.ts";
 import { serverUrl } from "./editor.logic.ts";
-import { configs, markers, pickDefault, scan, type RunConfig } from "./run.logic.ts";
+import { configs, markers, pickDefault, profileOf, scan, type RunConfig } from "./run.logic.ts";
 import { editor, setLayout } from "./editor.svelte.ts";
 
 export type Run = { cfg: RunConfig; id: string; state: "running" | "exited" | "idle"; exit: number | null; started: number; url: string };
@@ -152,7 +152,7 @@ export async function runStart(repo: string, cfg?: RunConfig): Promise<void> {
     await Promise.all(b.off);
     // Inzwischen gestoppt: gar nicht erst starten.
     if (!mine()) return;
-    await startCmd(id, repo, c.dir, c.target);
+    await startCmd(id, repo, c.dir, c.target, $state.snapshot(profileOf(s.profiles, s.profile)));
   } catch (e) {
     if (!mine()) return;
     push(b, new TextEncoder().encode(`\x1b[31m${e}\x1b[0m\r\n`));

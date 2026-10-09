@@ -119,3 +119,22 @@ export function pickDefault(cfgs: RunConfig[], last: string | null, activeFile: 
  * bleibt in tail stehen und wird mit dem naechsten Chunk entfernt; Aufwand O(Chunk + 4 KB).
  */
 export const scan = (tail: string, chunk: string) => plain(tail + chunk).slice(-4096);
+
+/** Spiegel von pty::Profile; name ist eindeutig und dient als gespeicherte Auswahl. */
+export type Profile = { name: string; release: boolean; args: string[] };
+export const BUILTIN: Profile[] = [
+  { name: "Debug", release: false, args: [] },
+  { name: "Release", release: true, args: [] },
+];
+
+/** Wie arg_ok in pty.rs: Flags und Werte ohne Leerzeichen, Quotes oder Shell-Zeichen. */
+export const argOk = (s: string) => /^[A-Za-z0-9_.:=/@+,-]+$/.test(s);
+
+/** Argumente aus dem Eingabefeld; null, wenn eines nicht erlaubt ist. */
+export function parseArgs(text: string): string[] | null {
+  const args = text.split(/\s+/).filter(Boolean);
+  return args.every(argOk) ? args : null;
+}
+
+/** Gewaehltes Profil, sonst Debug. */
+export const profileOf = (custom: Profile[], name: string): Profile => [...BUILTIN, ...custom].find((p) => p.name === name) ?? BUILTIN[0];

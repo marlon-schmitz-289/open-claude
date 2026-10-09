@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cargoConfigs, configs, dotnetRunnable, npmConfigs, pickDefault, scan } from "./run.logic.ts";
+import { cargoConfigs, configs, dotnetRunnable, npmConfigs, parseArgs, pickDefault, profileOf, scan } from "./run.logic.ts";
 import { serverUrl } from "./editor.logic.ts";
 
 const labels = (c: { label: string }[]) => c.map((x) => x.label);
@@ -71,4 +71,17 @@ test("scan: URL und Escape-Sequenz ueber Chunk-Grenzen", () => {
   assert.equal(serverUrl(tail, true), "http://localhost:5173/");
   // Begrenzt auf 4 KB.
   assert.equal(scan("x".repeat(5000), "y").length, 4096);
+});
+
+test("parseArgs: Flags ja, Shell-Zeichen nein", () => {
+  assert.deepEqual(parseArgs("  --features x,y -- --port=3000 "), ["--features", "x,y", "--", "--port=3000"]);
+  assert.deepEqual(parseArgs(""), []);
+  for (const bad of ["a;b", "$(id)", "a&b", "%PATH%", '"q"', "x|y"]) assert.equal(parseArgs(bad), null, bad);
+});
+
+test("profileOf: eigene Profile, Fallback Debug", () => {
+  const mine = [{ name: "Profiling", release: true, args: ["--features", "trace"] }];
+  assert.equal(profileOf(mine, "Profiling"), mine[0]);
+  assert.equal(profileOf(mine, "Release").release, true);
+  assert.equal(profileOf(mine, "weg").name, "Debug");
 });

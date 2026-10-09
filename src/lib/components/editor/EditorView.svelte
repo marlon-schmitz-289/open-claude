@@ -15,10 +15,12 @@
   import FileCodeIcon from "@lucide/svelte/icons/file-code";
   import FolderTreeIcon from "@lucide/svelte/icons/folder-tree";
   import SquareTerminalIcon from "@lucide/svelte/icons/square-terminal";
+  import SlidersIcon from "@lucide/svelte/icons/sliders-horizontal";
+  import BuildProfilesDialog from "./BuildProfilesDialog.svelte";
   import { FILES, PREVIEW, RUN, TESTS, groupOf, panelPath, type PanelId } from "$lib/dock";
-  import { closeTab, editor, focus, resetLayout, save, setLayout, setRun, togglePanel, watch } from "$lib/editor.svelte";
+  import { closeTab, editor, focus, resetLayout, save, setLayout, setProfile, setRun, togglePanel, watch } from "$lib/editor.svelte";
   import { chosen, detect, run, runRestart, runStart, runStop } from "$lib/run.svelte";
-  import type { RunConfig } from "$lib/run.logic";
+  import { BUILTIN, type RunConfig } from "$lib/run.logic";
   import Dock, { type TabInfo } from "./Dock.svelte";
   import FileTree from "./FileTree.svelte";
   import CodePane from "./CodePane.svelte";
@@ -32,6 +34,7 @@
   const s = $derived(editor(repo));
   const dirty = $derived(Object.values(s.files).filter((f) => f.dirty).length);
   let quick = $state(false);
+  let profilesOpen = $state(false);
 
   // Aenderungen von aussen (claude im Terminal) nur verfolgen, solange die Ansicht sichtbar ist.
   $effect(() => watch(repo));
@@ -148,6 +151,22 @@
         title="Startziel (F5 startet)"
         onchange={(v) => setRun(repo, v)}
       />
+      <Select
+        class="h-5 max-w-32 border-0 bg-transparent text-[11px]"
+        value={s.profile}
+        options={[...BUILTIN, ...s.profiles].map((p) => [p.name, p.name] as const)}
+        aria-label="Build-Profil"
+        title="Build-Profil"
+        onchange={(v) => setProfile(repo, v)}
+      />
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        class="text-muted-foreground"
+        title="Build-Profile verwalten"
+        aria-label="Build-Profile verwalten"
+        onclick={() => (profilesOpen = true)}><SlidersIcon /></Button
+      >
       <Button
         variant="ghost"
         size="icon-xs"
@@ -199,3 +218,5 @@
     />
   </div>
 </div>
+
+<BuildProfilesDialog bind:open={profilesOpen} {repo} />

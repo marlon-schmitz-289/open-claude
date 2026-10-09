@@ -2,7 +2,7 @@
 // Alle Pfade sind relativ zum Repo, mit "/" getrennt; "" = Projektordner.
 import { Channel, invoke, convertFileSrc } from "@tauri-apps/api/core";
 import type { Fw } from "./testing.logic.ts";
-import type { Target } from "./run.logic.ts";
+import type { Profile, Target } from "./run.logic.ts";
 
 export type Entry = {
   name: string;
@@ -68,8 +68,8 @@ export const xamlRender = (repo: string, path: string, content: string) =>
  * gepruefte Namen zu. Output kommt als Event "pty:<id>" (Bytes), das Ende als "pty-exit:<id>" (Exit-Code oder null);
  * ptyClose stoppt. Fuehrt Code aus dem Projekt aus: NUR auf Klick oder Taste.
  */
-export const runStart = (id: string, repo: string, dir: string, target: Target) =>
-  call<void>("run_start", { id, repo, dir, target });
+export const runStart = (id: string, repo: string, dir: string, target: Target, profile?: Profile) =>
+  call<void>("run_start", { id, repo, dir, target, profile });
 export const ptyClose = (id: string) => call<void>("pty_close", { id });
 export const ptyWrite = (id: string, data: string) => call<void>("pty_write", { id, data });
 export const ptyResize = (id: string, cols: number, rows: number) => call<void>("pty_resize", { id, cols, rows });

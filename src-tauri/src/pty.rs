@@ -145,6 +145,20 @@ pub enum Target {
     Cargo { bin: Option<String> },
 }
 
+/// Build-Profil der Run-Leiste: release haengt --release (cargo) bzw. -c Release (dotnet) an, args kommen hinten dran.
+#[derive(serde::Deserialize, Default)]
+pub struct Profile {
+    #[serde(default)]
+    release: bool,
+    #[serde(default)]
+    args: Vec<String>,
+}
+
+/// Zusatzargument eines Profils: Flags und Werte ohne Leerzeichen, Quotes oder Shell-Zeichen.
+fn arg_ok(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "_.:=/@+,-".contains(c))
+}
+
 /// Script- bzw. Binary-Name, der ohne Quoting in die Shell darf.
 fn name_ok(s: &str) -> bool {
     !s.is_empty() && !s.starts_with('-') && s.chars().all(|c| c.is_ascii_alphanumeric() || ":_.-".contains(c))
@@ -153,12 +167,13 @@ fn name_ok(s: &str) -> bool {
 /// Kommando der Run-Leiste in cwd. Nur feste Woerter und gepruefte Namen erreichen die Shell, darum bleibt es
 /// ein Shell-String (Login-Shell wie das Terminal, auch fish). Prueft, dass das Ziel im Ordner existiert.
 fn run_command(
+    p: &Profile,
     windows: bool,
     t: &Target,
     cwd: &Path,
     env: impl Fn(&str) -> Option<String>,
 ) -> Result<(String, Vec<String>), String> {
-    let words: Vec<&str> = match t {
+    let mut words: Vec<&str> = match t {
         Target::Npm { pm, script } => {
             if !["npm", "pnpm", "yarn", "bun"].contains(&pm.as_str()) || !name_ok(script) {
                 return Err(format!("Nicht erlaubt: {pm} run {script}"));
@@ -199,6 +214,18 @@ fn run_command(
             w
         }
     };
+    if p.release {
+        match t {
+            Target::Cargo { .. } => words.push("--release"),
+            Target::Dotnet { .. } => words.extend(["-c", "Release"]),
+            // npm kennt kein Release, das Script ist das Profil.
+            Target::Npm { .. } => {}
+        }
+    }
+    if let Some(a) = p.args.iter().find(|a| !arg_ok(a)) {
+        return Err(format!("Nicht erlaubtes Argument im Profil: {a}"));
+    }
+    words.extend(p.args.iter().map(String::as_str));
     if windows {
         // cmd loest die .cmd-Shims (npm.cmd, pnpm.cmd) auf.
         let args = ["/d", "/c"].into_iter().chain(words).map(String::from).collect();
@@ -222,9 +249,10 @@ pub fn run_start(
     repo: String,
     dir: String,
     target: Target,
+    profile: Option<Profile>,
 ) -> Result<(), String> {
     let cwd = if dir.is_empty() { PathBuf::from(&repo) } else { crate::files::within(&repo, &dir)? };
-    let (program, args) = run_command(cfg!(windows), &target, &cwd, |k| std::env::var(k).ok())?;
+    let (program, args) = run_command(&profile.unwrap_or_default(), cfg!(windows), &target, &cwd, |k| std::env::var(k).ok())?;
     let env: &[(&str, &str)] = match target {
         // Vite, CRA & Co. oeffnen sonst zusaetzlich den Browser.
         Target::Npm { .. } => &[("BROWSER", "none")],
@@ -394,7 +422,7 @@ pub async fn pty_close(ptys: State<'_, Ptys>, id: String) -> Result<(), String> 
 
 #[cfg(test)]
 mod tests {
-    use super::{plugin_dirs, run_command, valid_id, Target, UNIX_SHELL};
+    use super::{plugin_dirs, run_command, valid_id, Profile, Target, UNIX_SHELL};
 
     #[test]
     fn plugin_dirs_haengt_an() {
@@ -421,41 +449,58 @@ mod tests {
         let env = |k: &str| (k == "SHELL").then(|| "/bin/fish".to_string());
         let npm = |pm: &str, s: &str| Target::Npm { pm: pm.into(), script: s.into() };
         let d = tmp("npm", &[("package.json", r#"{"scripts":{"dev":"vite","tauri:dev":"x","-x":"y"}}"#)]);
-        let (p, a) = run_command(false, &npm("pnpm", "dev"), &d, env).unwrap();
+        let (p, a) = run_command(&Profile::default(), false, &npm("pnpm", "dev"), &d, env).unwrap();
         assert_eq!(p, "/bin/fish");
         assert_eq!(a, ["-lic", "pnpm run dev"]);
-        assert_eq!(run_command(false, &npm("npm", "tauri:dev"), &d, |_| None).unwrap().0, UNIX_SHELL);
-        let (p, a) = run_command(true, &npm("yarn", "dev"), &d, env).unwrap();
+        assert_eq!(run_command(&Profile::default(), false, &npm("npm", "tauri:dev"), &d, |_| None).unwrap().0, UNIX_SHELL);
+        let (p, a) = run_command(&Profile::default(), true, &npm("yarn", "dev"), &d, env).unwrap();
         assert_eq!(p, "cmd.exe");
         assert_eq!(a, ["/d", "/c", "yarn", "run", "dev"]);
-        assert!(run_command(false, &npm("npm; rm -rf ~", "dev"), &d, env).is_err());
+        assert!(run_command(&Profile::default(), false, &npm("npm; rm -rf ~", "dev"), &d, env).is_err());
         // Fehlt in package.json, Sonderzeichen, Option.
         for s in ["build", "dev & calc", "$(x)", "-x", ""] {
-            assert!(run_command(true, &npm("npm", s), &d, env).is_err(), "{s}");
+            assert!(run_command(&Profile::default(), true, &npm("npm", s), &d, env).is_err(), "{s}");
         }
-        assert!(run_command(false, &npm("npm", "dev"), &d.join("fehlt"), env).is_err());
+        assert!(run_command(&Profile::default(), false, &npm("npm", "dev"), &d.join("fehlt"), env).is_err());
         let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn profil_release_und_args() {
+        let d = std::env::temp_dir().join(format!("ocui-profil-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("Cargo.toml"), "").unwrap();
+        std::fs::write(d.join("a.csproj"), "").unwrap();
+        let env = |_: &str| None;
+        let rel = |args: &[&str]| Profile { release: true, args: args.iter().map(|s| s.to_string()).collect() };
+        let cargo = Target::Cargo { bin: None };
+        assert_eq!(run_command(&rel(&["--features", "x,y", "--", "--port=3000"]), false, &cargo, &d, env).unwrap().1, ["-lic", "cargo run --release --features x,y -- --port=3000"]);
+        assert_eq!(run_command(&rel(&[]), true, &Target::Dotnet { watch: false }, &d, env).unwrap().1, ["/d", "/c", "dotnet", "run", "-c", "Release"]);
+        for bad in ["a b", "x;rm", "$(id)", "a&b", "%PATH%", "\"q\"", ""] {
+            assert!(run_command(&rel(&[bad]), false, &cargo, &d, env).is_err(), "{bad}");
+        }
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
     fn run_dotnet_und_cargo() {
         let env = |_: &str| None;
         let one = tmp("dn1", &[("App.csproj", "")]);
-        let (_, a) = run_command(false, &Target::Dotnet { watch: true }, &one, env).unwrap();
+        let (_, a) = run_command(&Profile::default(), false, &Target::Dotnet { watch: true }, &one, env).unwrap();
         assert_eq!(a, ["-lic", "dotnet watch"]);
-        let (_, a) = run_command(true, &Target::Dotnet { watch: false }, &one, env).unwrap();
+        let (_, a) = run_command(&Profile::default(), true, &Target::Dotnet { watch: false }, &one, env).unwrap();
         assert_eq!(a, ["/d", "/c", "dotnet", "run"]);
         let two = tmp("dn2", &[("A.csproj", ""), ("B.fsproj", "")]);
-        assert!(run_command(false, &Target::Dotnet { watch: false }, &two, env).is_err());
+        assert!(run_command(&Profile::default(), false, &Target::Dotnet { watch: false }, &two, env).is_err());
         let none = tmp("dn0", &[]);
-        assert!(run_command(false, &Target::Dotnet { watch: false }, &none, env).is_err());
+        assert!(run_command(&Profile::default(), false, &Target::Dotnet { watch: false }, &none, env).is_err());
 
         let c = tmp("cargo", &[("Cargo.toml", "[package]")]);
         let cargo = |b: Option<&str>| Target::Cargo { bin: b.map(String::from) };
-        assert_eq!(run_command(false, &cargo(None), &c, env).unwrap().1, ["-lic", "cargo run"]);
-        assert_eq!(run_command(true, &cargo(Some("ocui-sh")), &c, env).unwrap().1, ["/d", "/c", "cargo", "run", "--bin", "ocui-sh"]);
-        assert!(run_command(false, &cargo(Some("a b")), &c, env).is_err());
-        assert!(run_command(false, &cargo(None), &none, env).is_err());
+        assert_eq!(run_command(&Profile::default(), false, &cargo(None), &c, env).unwrap().1, ["-lic", "cargo run"]);
+        assert_eq!(run_command(&Profile::default(), true, &cargo(Some("ocui-sh")), &c, env).unwrap().1, ["/d", "/c", "cargo", "run", "--bin", "ocui-sh"]);
+        assert!(run_command(&Profile::default(), false, &cargo(Some("a b")), &c, env).is_err());
+        assert!(run_command(&Profile::default(), false, &cargo(None), &none, env).is_err());
         for d in [one, two, none, c] {
             let _ = std::fs::remove_dir_all(d);
         }
