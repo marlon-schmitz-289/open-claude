@@ -396,7 +396,8 @@ fn nav(url: &tauri::Url, dev: Option<&tauri::Url>) -> Option<bool> {
         return Some(true);
     }
     if url.scheme() == "tauri" || url.host_str() == Some("tauri.localhost") || dev.is_some_and(|d| d.origin() == url.origin()) {
-        return Some(url.path() == "/");
+        // Start-URL: tauri://localhost (leerer Pfad, macOS) bzw. .../index.html je nach Plattform
+        return Some(matches!(url.path(), "" | "/" | "/index.html"));
     }
     match url.scheme() {
         "http" | "https" if matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")) => Some(true),
@@ -690,6 +691,10 @@ mod tests {
         assert_eq!(nav("http://localhost:1420/releases"), Some(false));
         assert_eq!(nav("tauri://localhost/"), Some(true));
         assert_eq!(nav("tauri://localhost/releases"), Some(false));
+        // Release auf macOS laedt tauri://localhost (leerer Pfad) bzw. /index.html
+        assert_eq!(nav("tauri://localhost"), Some(true));
+        assert_eq!(nav("tauri://localhost/index.html"), Some(true));
+        assert_eq!(nav("http://tauri.localhost/index.html"), Some(true));
         assert_eq!(nav("http://tauri.localhost/x"), Some(false));
         assert_eq!(nav("http://ipc.localhost/plugin%3Afoo"), Some(true));
         assert_eq!(nav("http://localhost:5173/app"), Some(true));
