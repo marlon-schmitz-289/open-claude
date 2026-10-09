@@ -347,7 +347,7 @@
             {#if it.text}<p class="whitespace-pre-wrap select-text">{it.text}</p>{/if}
           </div>
         {:else if it.kind === "text"}
-          <Markdown text={it.text} size="text-sm" />
+          <Markdown text={it.text} root={cwd} size="text-sm" />
         {:else if it.kind === "tool"}
           <div class="text-muted-foreground flex min-w-0 items-center gap-2 font-mono text-xs">
             <span class={it.state === "err" ? "text-destructive" : it.state === "ok" ? "text-green-500" : "text-primary animate-pulse"}

@@ -1,18 +1,51 @@
+<script module lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
+  // Pfad -> data:-URL; beim Streamen rendert der Text staendig neu, die Datei wird trotzdem nur einmal gelesen.
+  const local = new Map<string, Promise<string>>();
+</script>
+
 <script lang="ts">
   import { marked } from "marked";
   import DOMPurify from "dompurify";
   import { forge } from "$lib/git";
 
-  /** base: Seite, gegen die relative Links aufgeloest werden (z. B. Release-URL). size: Schriftgroesse (Tailwind). */
+  /** base: Seite, gegen die relative Links aufgeloest werden (z. B. Release-URL). size: Schriftgroesse (Tailwind).
+   *  root: Ordner, gegen den relative Bildpfade aufgeloest werden (Projekt des Chats). */
   let {
     text,
     base,
+    root,
     onerror,
     size = "text-[11px]",
-  }: { text: string; base?: string; onerror?: (e: string) => void; size?: string } = $props();
+  }: { text: string; base?: string; root?: string; onerror?: (e: string) => void; size?: string } = $props();
 
   // Fremdes Markdown: ohne DOMPurify waere {@html} XSS mit Zugriff auf alle Tauri-Commands.
   const html = $derived(DOMPurify.sanitize(marked.parse(text, { gfm: true, breaks: true, async: false })));
+
+  // Claude verlinkt Bilder als lokale Pfade (/Users/..., C:\..., file://, out/x.png); die WebView kann die nicht laden.
+  let el: HTMLDivElement;
+  $effect(() => {
+    void html;
+    if (base) return;
+    for (const img of el.querySelectorAll("img")) {
+      // file:///C:/x -> C:/x, file:///Users/x -> /Users/x
+      const src = (img.getAttribute("src") ?? "").replace(/^file:\/\/(\/(?=[A-Za-z]:))?/, "");
+      let path: string;
+      try {
+        path = decodeURI(src);
+      } catch {
+        continue;
+      }
+      // Relativ (ohne Schema wie https:/data:) gegen root, absolut direkt.
+      if (!/^(\/(?!\/)|[A-Za-z]:[\\/])/.test(path)) {
+        if (!root || /^([a-z][\w+.-]*:|\/\/)/i.test(path)) continue;
+        path = `${root.replace(/[\\/]+$/, "")}/${path}`;
+      }
+      // Fehlschlag nicht merken: das Bild entsteht evtl. erst noch.
+      if (!local.has(path)) local.set(path, invoke<string>("chat_image", { path }).catch((e) => (local.delete(path), Promise.reject(e))));
+      local.get(path)!.then((u) => (img.src = u)).catch(() => {});
+    }
+  });
 
   // Links nie in der App-Webview navigieren, sondern im System-Browser oeffnen.
   function click(e: MouseEvent) {
@@ -32,7 +65,7 @@
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="md {size} break-words select-text" onclick={click}>{@html html}</div>
+<div bind:this={el} class="md {size} break-words select-text" onclick={click}>{@html html}</div>
 
 <style>
   .md :global(:where(h1, h2, h3, h4, h5, h6)) {
