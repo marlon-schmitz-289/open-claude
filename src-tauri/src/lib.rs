@@ -562,6 +562,8 @@ pub fn run() {
             chat::chat_history,
             chat::chat_image,
             chat::chat_bash,
+            chat::chat_mcp_add,
+            chat::chat_mcp_remove,
             forge::forge_login,
             forge::forge_logout,
             forge::forge_import_cli,

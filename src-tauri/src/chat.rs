@@ -35,7 +35,8 @@ impl Chats {
 }
 
 /// `--permission-prompt-tool stdio`: Rechte-Abfragen kommen als control_request, das Frontend antwortet.
-const CLAUDE: [&str; 9] = [
+/// `--include-partial-messages`: Text und Gedanken kommen live als stream_event.
+const CLAUDE: [&str; 10] = [
     "claude",
     "-p",
     "--input-format",
@@ -45,14 +46,19 @@ const CLAUDE: [&str; 9] = [
     "--verbose",
     "--permission-prompt-tool",
     "stdio",
+    "--include-partial-messages",
 ];
 
 /// Unix ueber die Login-Shell wie im Terminal (PATH aus .zprofile/.zshrc), Windows ueber cmd (findet claude.cmd/.exe).
 /// `resume` ist per valid_id geprueft und damit shell-sicher.
-fn command(resume: Option<&str>) -> std::process::Command {
+fn command(resume: Option<&str>, bypass: bool) -> std::process::Command {
     let mut args: Vec<&str> = CLAUDE.to_vec();
     if let Some(sid) = resume {
         args.extend(["--resume", sid]);
+    }
+    // Nur auf ausdrueckliche Freigabe pro Start (Frontend fragt nach); ohne das Flag lehnt claude bypassPermissions ab.
+    if bypass {
+        args.push("--dangerously-skip-permissions");
     }
     if cfg!(windows) {
         let mut cmd = crate::quiet("cmd.exe");
@@ -72,7 +78,14 @@ fn command(resume: Option<&str>) -> std::process::Command {
 }
 
 #[tauri::command]
-pub fn chat_open(app: AppHandle, chats: State<'_, Chats>, id: String, cwd: String, resume: Option<String>) -> Result<(), String> {
+pub fn chat_open(
+    app: AppHandle,
+    chats: State<'_, Chats>,
+    id: String,
+    cwd: String,
+    resume: Option<String>,
+    bypass: Option<bool>,
+) -> Result<(), String> {
     if !crate::pty::valid_id(&id) {
         return Err(format!("Ungueltige Chat-id: {id}"));
     }
@@ -85,7 +98,7 @@ pub fn chat_open(app: AppHandle, chats: State<'_, Chats>, id: String, cwd: Strin
     if chats.lock().contains_key(&id) {
         return Err(format!("Chat laeuft schon: {id}"));
     }
-    let mut cmd = command(resume.as_deref());
+    let mut cmd = command(resume.as_deref(), bypass == Some(true));
     cmd.current_dir(&cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -102,7 +115,8 @@ pub fn chat_open(app: AppHandle, chats: State<'_, Chats>, id: String, cwd: Strin
     let (Some(stdin), Some(stdout), Some(stderr)) = (child.stdin.take(), child.stdout.take(), child.stderr.take()) else {
         return Err("claude: Pipes fehlen".into());
     };
-    chats.lock().insert(id.clone(), Chat { stdin, pid: child.id() });
+    let pid = child.id();
+    chats.lock().insert(id.clone(), Chat { stdin, pid });
 
     let pipe = |r: Box<dyn std::io::Read + Send>, event: String, app: AppHandle| {
         std::thread::spawn(move || {
@@ -115,12 +129,64 @@ pub fn chat_open(app: AppHandle, chats: State<'_, Chats>, id: String, cwd: Strin
     pipe(Box::new(stderr), format!("chat-err:{id}"), app.clone());
     std::thread::spawn(move || {
         let code = child.wait().ok().and_then(|s| s.code());
+        // Neustart unter derselben id (Bypass, neue MCP-Server): den Nachfolger nicht austragen.
         if let Some(chats) = app.try_state::<Chats>() {
-            chats.lock().remove(&id);
+            let mut map = chats.lock();
+            if map.get(&id).is_some_and(|c| c.pid == pid) {
+                map.remove(&id);
+            }
         }
         let _ = app.emit(&format!("chat-exit:{id}"), code);
     });
     Ok(())
+}
+
+/// MCP-Servername und Scope, wie sie `claude mcp` annimmt.
+fn mcp_args_ok(name: &str, scope: &str) -> bool {
+    crate::pty::valid_id(name) && !name.starts_with('-') && ["local", "user", "project"].contains(&scope)
+}
+
+/// `claude <args>` ohne Shell-Quoting: Windows direkt claude.exe, Unix ueber die Login-Shell (PATH) mit "$@".
+// ponytail: claude.cmd (npm-Installation) findet Command::new unter Windows nicht; dann Fehlermeldung statt cmd-Quoting.
+fn claude_cli(cwd: &str, args: &[&str]) -> Result<String, String> {
+    let mut cmd = if cfg!(windows) {
+        crate::quiet("claude")
+    } else {
+        let sh = std::env::var("SHELL").ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| crate::pty::UNIX_SHELL.into());
+        let mut c = crate::quiet(&sh);
+        c.args(["-lic", r#"exec claude "$@""#, "claude"]);
+        c
+    };
+    for key in crate::pty::MARKERS {
+        cmd.env_remove(key);
+    }
+    let out = cmd.args(args).current_dir(cwd).output().map_err(|e| format!("claude nicht startbar: {e}"))?;
+    let text = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
+    if out.status.success() {
+        Ok(text(&out.stdout))
+    } else {
+        Err(Some(text(&out.stderr)).filter(|s| !s.is_empty()).unwrap_or_else(|| text(&out.stdout)))
+    }
+}
+
+/// MCP-Server dauerhaft eintragen (claude mcp add-json); config ist das Server-Objekt (command/args/env oder type+url).
+#[tauri::command]
+pub async fn chat_mcp_add(cwd: String, name: String, config: serde_json::Value, scope: String) -> Result<String, String> {
+    if !mcp_args_ok(&name, &scope) {
+        return Err("Name nur aus Buchstaben, Ziffern, - und _".into());
+    }
+    if !config.get("command").is_some_and(|c| c.is_string()) && !config.get("url").is_some_and(|u| u.is_string()) {
+        return Err("Befehl oder URL fehlt".into());
+    }
+    crate::git::blocking(move || claude_cli(&cwd, &["mcp", "add-json", "-s", &scope, &name, &config.to_string()])).await
+}
+
+#[tauri::command]
+pub async fn chat_mcp_remove(cwd: String, name: String, scope: String) -> Result<String, String> {
+    if !mcp_args_ok(&name, &scope) {
+        return Err("Nur eigene Server (local, user, project) lassen sich entfernen".into());
+    }
+    crate::git::blocking(move || claude_cli(&cwd, &["mcp", "remove", "-s", &scope, &name])).await
 }
 
 /// Eine JSON-Zeile an claude (Nachricht, Rechte-Antwort, Abbruch).
@@ -307,6 +373,14 @@ pub async fn chat_bash(cwd: String, cmd: String) -> Result<BashOut, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_name_und_scope() {
+        assert!(super::mcp_args_ok("github-2", "project"));
+        for (n, sc) in [("-h", "user"), ("a b", "user"), ("x;y", "local"), ("", "user"), ("ok", "global")] {
+            assert!(!super::mcp_args_ok(n, sc), "{n} {sc}");
+        }
+    }
 
     #[cfg(unix)]
     #[test]
