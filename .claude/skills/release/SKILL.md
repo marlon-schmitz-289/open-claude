@@ -88,10 +88,10 @@ Body = die `- `-Stichpunkte der feat/fix-Commits seit dem letzten Tag, ohne `- V
 
 ## 5. Run überwachen
 
-Push auf `master` startet **keine** CI mehr, nur der Tag startet `Release` (`.github/workflows/release.yml`, 4 Build-Jobs: windows, macos-aarch64, macos-x86_64, linux; parallel dazu `test` = `ci.yml` auf 3 OS). Im Hintergrund warten:
+Der Tag startet `Release` (`.github/workflows/release.yml`, 4 Build-Jobs: windows, macos-aarch64, macos-x86_64, linux; parallel dazu `test` = `ci.yml` auf 3 OS). Der Push des Bump-Commits auf `master` startet denselben Workflow zusätzlich als Cache-Lauf (Cargo.lock geändert) – den nicht verwechseln, darum per `-b` auf den Tag filtern. Im Hintergrund warten:
 
 ```sh
-id=$(gh run list -w release.yml -L 1 --json databaseId -q '.[0].databaseId')
+id=$(gh run list -w release.yml -b v1.0.7 -L 1 --json databaseId -q '.[0].databaseId')
 until s=$(gh run view $id --json status,conclusion -q '.status+" "+.conclusion') && [[ $s == completed* ]]; do sleep 30; done
 echo "$s"; gh run view $id --log-failed | grep -E "##\[error\]|FAILED|panicked" | cut -f1,3
 gh release view v1.0.7 --json isDraft,assets -q '"draft=\(.isDraft) assets=\(.assets|length)"'

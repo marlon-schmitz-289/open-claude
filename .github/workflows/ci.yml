@@ -36,9 +36,11 @@ jobs:
             patchelf libssl-dev libdbus-1-dev pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
+      # Nur master speichert (Cache-Lauf aus release.yml); Tag- und PR-Caches sieht sonst keiner
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       # cargo test legt Test-Commits an
       - name: Git-Identitaet fuer Tests

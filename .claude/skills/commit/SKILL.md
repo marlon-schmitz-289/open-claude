@@ -55,7 +55,7 @@ git log --oneline @{u}..HEAD
 git push origin HEAD
 ```
 
-Push auf `master` startet keine Action (CI nur bei PRs, Release nur bei Tags). Push abgelehnt (remote weiter) → `git pull --rebase`, dann erneut pushen; bei Konflikten stoppen und dem User melden. **Nie** `--force`.
+Push auf `master` startet nur bei Änderungen an `Cargo.lock`/`Cargo.toml`/Workflows einen Cache-Lauf von `release.yml` (baut, veröffentlicht nichts); CI sonst nur bei PRs, Release nur bei Tags. Push abgelehnt (remote weiter) → `git pull --rebase`, dann erneut pushen; bei Konflikten stoppen und dem User melden. **Nie** `--force`.
 
 ## 5. Meldung
 

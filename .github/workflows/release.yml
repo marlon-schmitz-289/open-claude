@@ -4,7 +4,22 @@ on:
   push:
     tags:
       - "v*"
+    # Cache-Lauf: Tags lesen nur Caches von master, darum dort bauen, sobald sich Abhaengigkeiten aendern
+    branches:
+      - master
+    paths:
+      - src-tauri/Cargo.lock
+      - src-tauri/Cargo.toml
+      - .github/workflows/*.yml
+  # Caches verfallen nach 7 Tagen ohne Zugriff, neue Rust-Version macht sie ungueltig
+  schedule:
+    - cron: "0 4 * * 1,4"
   workflow_dispatch:
+
+# Neuer Cache-Lauf ersetzt den alten; Tag-Runs laufen immer zu Ende
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: write
@@ -55,7 +70,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.name == 'macos-aarch64' && 'aarch64-apple-darwin' || matrix.name == 'macos-x86_64' && 'x86_64-apple-darwin' || '' }}
-      # Kein rust-cache: Caches gelten nur fuer den eigenen Ref, ein Tag sieht die vom letzten Tag nie.
+      # Nur master speichert: ein Tag-Cache waere fuer den naechsten Tag unsichtbar.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: release-${{ matrix.name }}
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       # Changelog: Stichpunkte der feat/fix-Commits seit dem letzten Tag
       - name: Changelog
@@ -80,7 +100,6 @@ jobs:
         if: matrix.name == 'windows'
         run: dotnet publish src-tauri/xaml-preview -c Release -o src-tauri/xaml-preview/publish
 
-      # beforeDevCommand baut ocui-sh nur fuer den Dev-Modus, im Release-Build reicht beforeBuildCommand
       - uses: tauri-apps/tauri-action@v0
         if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
         env:
@@ -101,8 +120,9 @@ jobs:
         with:
           args: ${{ matrix.args }}
 
+      # Cache-Laeufe brauchen keine Installer
       - uses: actions/upload-artifact@v7
-        if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         with:
           name: bundles-${{ matrix.name }}
           # nur die Installer, nicht das entpackte AppDir
