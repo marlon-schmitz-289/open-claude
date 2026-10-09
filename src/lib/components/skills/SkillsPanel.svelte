@@ -1,6 +1,6 @@
 <script lang="ts">
   import Notice from "$lib/components/Notice.svelte";
-  import { RefreshButton, SectionHead, Segmented, Switch } from "$lib/components/kit";
+  import { RefreshButton, SectionHead, Segmented, Select, Switch } from "$lib/components/kit";
   import PluginsPanel from "./PluginsPanel.svelte";
   import { untrack } from "svelte";
   import { Input } from "$lib/components/ui/input/index.js";
@@ -122,14 +122,11 @@
     <div class="border-border flex flex-wrap items-center gap-2 border-b px-3 py-2">
       {@render modeSwitch()}
       <span class="text-muted-foreground">Profil</span>
-      <select
-        class="bg-secondary border-border rounded border px-1.5 py-0.5 text-xs"
+      <Select
         bind:value={() => (ps?.profile === undefined ? "" : (ps.profile ?? NONE)), setProfile}
-      >
-        <option value="">Nach Typ ({byKind})</option>
-        <option value={NONE}>Kein Profil</option>
-        {#each names as n (n)}<option value={n}>{n}</option>{/each}
-      </select>
+        options={[[`Nach Typ (${byKind})`, ""], ["Kein Profil", NONE], ...names.map((n) => [n, n] as const)]}
+        aria-label="Profil"
+      />
       <span class="flex-1"></span>
       <Input bind:value={query} placeholder="Skill suchen" class="h-7 w-48 text-xs" />
       <RefreshButton {loading} onclick={reload} />

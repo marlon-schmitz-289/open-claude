@@ -4,7 +4,7 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import Notice from "$lib/components/Notice.svelte";
-  import { Segmented } from "$lib/components/kit";
+  import { Segmented, Select } from "$lib/components/kit";
   import { fuzzy } from "$lib/fuzzy";
   import { skills, renameProfile, fromProject, adjust, emptyProject, type SkillStore, type SkillsInfo } from "$lib/skills";
   import TrashIcon from "@lucide/svelte/icons/trash-2";
@@ -116,9 +116,7 @@
 
         <label class="flex flex-col gap-1">
           <span class="text-muted-foreground">Projekt (Skill-Liste, „Aus Projekt“)</span>
-          <select class="bg-secondary border-border rounded border px-1.5 py-0.5" bind:value={ctx}>
-            {#each repos as r (r.path)}<option value={r.path}>{r.rel}</option>{/each}
-          </select>
+          <Select bind:value={ctx} options={repos.map((r) => [r.rel, r.path] as const)} />
         </label>
 
         {#if kinds.length}
@@ -127,13 +125,12 @@
             {#each kinds as k (k)}
               <label class="flex items-center gap-2">
                 <span class="flex-1 truncate">{k}</span>
-                <select
-                  class="bg-secondary border-border w-28 rounded border px-1.5 py-0.5"
+                <Select
+                  class="w-28"
                   bind:value={() => draft.kindProfiles[k] ?? "", (n) => setKind(k, n)}
-                >
-                  <option value="">kein Profil</option>
-                  {#each names as n (n)}<option value={n}>{n}</option>{/each}
-                </select>
+                  options={[["kein Profil", ""], ...names.map((n) => [n, n] as const)]}
+                  aria-label="Profil für {k}"
+                />
               </label>
             {/each}
           </div>

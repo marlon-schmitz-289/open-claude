@@ -2,7 +2,7 @@
   // Editor-Ansicht eines Projekts: verdrahtet Dock, Dateibaum und Code-Panels mit dem Store.
   // Haelt selbst keinen Zustand: beim Wechsel zu Terminal/Git wird sie abgebaut, Puffer und Layout liegen in $lib/editor.svelte.
   import Notice from "$lib/components/Notice.svelte";
-  import { Empty, fileIcon } from "$lib/components/kit";
+  import { Empty, Select, fileIcon } from "$lib/components/kit";
   import { Button } from "$lib/components/ui/button/index.js";
   import SaveIcon from "@lucide/svelte/icons/save";
   import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
@@ -135,24 +135,19 @@
     {/if}
     <span class="bg-background/60 ring-foreground/10 ml-3 flex items-center gap-0.5 rounded-md p-0.5 ring-1">
       {#if running}<span class="bg-success mx-1 size-1.5 animate-pulse rounded-full" title="Läuft"></span>{/if}
-      <select
-        class="hover:bg-accent/50 h-5 max-w-60 min-w-0 rounded border-0 bg-transparent px-1.5 font-mono text-[11px] outline-none focus-visible:ring-ring/50 focus-visible:ring-2 disabled:opacity-50"
+      <Select
+        class="h-5 max-w-60 border-0 bg-transparent font-mono text-[11px]"
         value={cfg?.label ?? ""}
+        groups={kinds.map(([kind, label]) => ({
+          label,
+          options: r.configs.filter((c) => c.target.kind === kind).map((c) => [c.label, c.label] as const),
+        }))}
+        placeholder="Nichts zum Starten"
         disabled={!r.configs.length}
         aria-label="Startziel"
         title="Startziel (F5 startet)"
-        onchange={(e) => setRun(repo, e.currentTarget.value)}
-      >
-        {#if !r.configs.length}<option value="">Nichts zum Starten</option>{/if}
-        {#each kinds as [kind, label] (kind)}
-          {@const list = r.configs.filter((c) => c.target.kind === kind)}
-          {#if list.length}
-            <optgroup {label} class="bg-popover">
-              {#each list as c (c.label)}<option value={c.label} class="bg-popover text-popover-foreground">{c.label}</option>{/each}
-            </optgroup>
-          {/if}
-        {/each}
-      </select>
+        onchange={(v) => setRun(repo, v)}
+      />
       <Button
         variant="ghost"
         size="icon-xs"

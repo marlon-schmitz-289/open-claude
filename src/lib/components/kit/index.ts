@@ -2,6 +2,7 @@ export { menuContent, menuItem, menuSeparator } from "./menu";
 export { default as ContextItem } from "./ContextItem.svelte";
 export { default as Switch } from "./Switch.svelte";
 export { default as Segmented } from "./Segmented.svelte";
+export { default as Select } from "./Select.svelte";
 export { default as SectionHead } from "./SectionHead.svelte";
 export { default as RefreshButton } from "./RefreshButton.svelte";
 export { default as Tabs } from "./Tabs.svelte";

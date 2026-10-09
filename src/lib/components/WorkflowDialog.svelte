@@ -4,6 +4,7 @@
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
+  import { Select } from "$lib/components/kit";
   import { Textarea } from "$lib/components/ui/textarea/index.js";
   import { EFFORTS, MODELS, fromScript, newAgent, newPhase, newTemplate, problems, toScript, type WfFile, type WfTemplate } from "$lib/workflow.logic";
   import ArrowUpIcon from "@lucide/svelte/icons/arrow-up";
@@ -153,9 +154,7 @@
                   <Button variant={a.model === m ? "default" : "outline"} size="sm" class="h-6 px-2 text-xs" onclick={() => (a.model = m)}>{m || "Session"}</Button>
                 {/each}
                 <span class="text-muted-foreground ml-2">Effort</span>
-                <select bind:value={a.effort} class="border-input bg-background h-6 rounded-md border px-1 text-xs">
-                  {#each EFFORTS as e (e)}<option value={e}>{e || "Session"}</option>{/each}
-                </select>
+                <Select bind:value={a.effort} options={EFFORTS.map((e) => [e || "Session", e] as const)} aria-label="Effort" />
               </div>
               <details open={!!a.schema}>
                 <summary class="text-muted-foreground cursor-pointer">Strukturierte Ausgabe (JSON-Schema)</summary>
