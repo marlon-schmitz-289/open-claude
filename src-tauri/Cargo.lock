@@ -2822,7 +2822,7 @@ dependencies = [
 
 [[package]]
 name = "ocui"
-version = "1.2.7"
+version = "1.2.8"
 dependencies = [
  "base64 0.23.1",
  "keyring",
