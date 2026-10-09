@@ -10,6 +10,7 @@ use walkdir::WalkDir;
 
 // Terminal in der App (ersetzt das externe wt.exe-Fenster).
 mod pty;
+mod chat;
 // GitHub/GitLab: Konten, Repos, PRs, Klonen.
 mod forge;
 // Neue Repos anlegen (Scaffold, git init, erster Commit).
@@ -536,6 +537,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(pty::Ptys::default())
+        .manage(chat::Chats::default())
         .manage(preview::PreviewRoots::default())
         .manage(runner::Runs::default())
         .register_asynchronous_uri_scheme_protocol("preview", |ctx, req, responder| {
@@ -554,6 +556,9 @@ pub fn run() {
             pty::pty_resize,
             pty::pty_close,
             pty::run_start,
+            chat::chat_open,
+            chat::chat_send,
+            chat::chat_close,
             forge::forge_login,
             forge::forge_logout,
             forge::forge_import_cli,
@@ -671,6 +676,7 @@ pub fn run() {
         .run(|app, event| match event {
             tauri::RunEvent::Exit => {
                 app.state::<pty::Ptys>().close_all();
+                app.state::<chat::Chats>().close_all();
                 unity::kill_all();
                 app.state::<runner::Runs>().kill_all();
             }

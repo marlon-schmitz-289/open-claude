@@ -44,7 +44,7 @@
   import { clampZoom, zoomKey, zoomStep, ZOOM_MAX, ZOOM_MIN } from "$lib/zoom";
   import ZoomInIcon from "@lucide/svelte/icons/zoom-in";
   import IdleAmongUs from "$lib/components/IdleAmongUs.svelte";
-  import Terminal from "$lib/components/Terminal.svelte";
+  import Chat from "$lib/components/Chat.svelte";
   import ActivityPanel from "$lib/components/ActivityPanel.svelte";
   import Splitter, { stored } from "$lib/components/Splitter.svelte";
   import WorkflowIcon from "@lucide/svelte/icons/workflow";
@@ -731,7 +731,7 @@
     if (await confirm("Sitzung beenden? Ein laufender claude-Prozess wird abgebrochen.", "Beenden")) closeSession(id);
   }
 
-  /** Aus der Liste nehmen; der Terminal-Unmount schliesst die PTY. */
+  /** Aus der Liste nehmen; der Chat-Unmount beendet claude. */
   function closeSession(id: string) {
     sessions = sessions.filter((s) => s.id !== id);
     // Wie bei Tabs ueblich zur letzten verbliebenen Session, erst ohne Session zurueck zur Liste.
@@ -1334,7 +1334,7 @@
     </Command.List>
   </Command.Root>
 
-  <!-- Alle Terminals bleiben gemountet, sonst stirbt claude beim Zurueckgehen. -->
+  <!-- Alle Chats bleiben gemountet, sonst stirbt claude beim Zurueckgehen. -->
   {#if view === "term" && sessions.length > 1}
     <div class="bg-chrome border-border flex shrink-0 gap-px overflow-x-auto border-b px-1 text-[11px]" role="tablist">
       {#each sessions as s (s.id)}
@@ -1362,12 +1362,7 @@
   <div class="flex min-h-0 flex-1 {view === 'term' ? '' : 'hidden'}">
     <div class="min-w-0 flex-1">
       {#each sessions as s (s.id)}
-        <Terminal
-          id={s.id}
-          cwd={s.repo.path}
-          visible={s.id === active}
-          onexit={() => closeSession(s.id)}
-        />
+        <Chat id={s.id} cwd={s.repo.path} visible={s.id === active} />
       {/each}
     </div>
     {#if side && activeSession && view === "term"}

@@ -101,7 +101,7 @@ fn parent(dir: &str) -> Option<&str> {
 }
 
 /// Fallback ohne $SHELL: Standard-Shell des Systems.
-const UNIX_SHELL: &str = if cfg!(target_os = "macos") { "/bin/zsh" } else { "/bin/bash" };
+pub(crate) const UNIX_SHELL: &str = if cfg!(target_os = "macos") { "/bin/zsh" } else { "/bin/bash" };
 
 /// Welche Shell `claude` startet. Unix: $SHELL als Login-Shell. Windows: zuerst die eigene
 /// ocui-sh (`own`, liegt neben der App), sonst Git-Bash, pwsh, cmd.
@@ -180,8 +180,7 @@ pub fn pty_open(
     let settings = theme_settings(&app, &theme).map(|p| p.to_string_lossy().into_owned());
     let (program, args) =
         shell(cfg!(windows), &own, settings.is_some(), |k| std::env::var(k).ok(), |p| Path::new(p).is_file());
-    let mods = crate::skills::mods(&crate::skills::mods_dir()).into_iter().map(|m| m.path.into());
-    let dirs = plugin_dirs(std::env::var("CLAUDE_CODE_PLUGIN_DIRS").ok(), builtin_mod(&app).into_iter().chain(mods));
+    let dirs = mod_dirs(&app);
     let panel = crate::activity::panel_file(&id).to_string_lossy().into_owned();
     let mut env: Vec<_> = dirs.iter().map(|d| ("CLAUDE_CODE_PLUGIN_DIRS", d.as_str())).collect();
     // Die Mod schreibt ihre Session-Daten dorthin, das App-Panel liest sie.
@@ -250,6 +249,12 @@ pub(crate) fn builtin_mod(app: &AppHandle) -> Option<PathBuf> {
         }
     }
     Some(dir)
+}
+
+/// CLAUDE_CODE_PLUGIN_DIRS fuer claude: eingebaute und installierte Mods.
+pub(crate) fn mod_dirs(app: &AppHandle) -> Option<String> {
+    let mods = crate::skills::mods(&crate::skills::mods_dir()).into_iter().map(|m| m.path.into());
+    plugin_dirs(std::env::var("CLAUDE_CODE_PLUGIN_DIRS").ok(), builtin_mod(app).into_iter().chain(mods))
 }
 
 /// Mod-Ordner hinter einen schon gesetzten Wert haengen; ohne Mods None (Env bleibt wie geerbt).
@@ -359,6 +364,22 @@ pub fn run_start(
     spawn(app, &ptys, id, &cwd.to_string_lossy(), &program, args, 120, 30, env, true)
 }
 
+/// Env-Marker einer umgebenden Claude-Session, die ein gestartetes claude nicht erben darf (siehe spawn).
+pub(crate) const MARKERS: [&str; 12] = [
+    "NO_COLOR",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDECODE",
+    "AI_AGENT",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+];
+
 /// Programm in einem neuen PTY starten, Output und Ende als Events melden. tree: siehe Session.
 #[allow(clippy::too_many_arguments)]
 fn spawn(
@@ -401,20 +422,7 @@ fn spawn(
     // Aus einer Claude-Session gestartet (z. B. tauri dev) erben wir deren Marker;
     // das claude im Terminal haelt sich dann fuer einen Sub-Agent: keine Farben, kein Transcript.
     // NO_COLOR setzt Claude Code fuer seine Tool-Shells; ein Terminal soll trotzdem Farben zeigen.
-    for key in [
-        "NO_COLOR",
-        "CLAUDE_CODE_MESSAGING_TOKEN",
-        "CLAUDECODE",
-        "AI_AGENT",
-        "CLAUDE_PID",
-        "CLAUDE_EFFORT",
-        "CLAUDE_CODE_CHILD_SESSION",
-        "CLAUDE_CODE_SESSION_ID",
-        "CLAUDE_CODE_SESSION_ATTENDED",
-        "CLAUDE_CODE_MESSAGING_SOCKET",
-        "CLAUDE_CODE_ENTRYPOINT",
-        "CLAUDE_CODE_EXECPATH",
-    ] {
+    for key in MARKERS {
         cmd.env_remove(key);
     }
 

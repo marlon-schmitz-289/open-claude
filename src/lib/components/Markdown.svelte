@@ -3,8 +3,13 @@
   import DOMPurify from "dompurify";
   import { forge } from "$lib/git";
 
-  /** base: Seite, gegen die relative Links aufgeloest werden (z. B. Release-URL). */
-  let { text, base, onerror }: { text: string; base?: string; onerror?: (e: string) => void } = $props();
+  /** base: Seite, gegen die relative Links aufgeloest werden (z. B. Release-URL). size: Schriftgroesse (Tailwind). */
+  let {
+    text,
+    base,
+    onerror,
+    size = "text-[11px]",
+  }: { text: string; base?: string; onerror?: (e: string) => void; size?: string } = $props();
 
   // Fremdes Markdown: ohne DOMPurify waere {@html} XSS mit Zugriff auf alle Tauri-Commands.
   const html = $derived(DOMPurify.sanitize(marked.parse(text, { gfm: true, breaks: true, async: false })));
@@ -27,7 +32,7 @@
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="md text-[11px] break-words select-text" onclick={click}>{@html html}</div>
+<div class="md {size} break-words select-text" onclick={click}>{@html html}</div>
 
 <style>
   .md :global(:where(h1, h2, h3, h4, h5, h6)) {
