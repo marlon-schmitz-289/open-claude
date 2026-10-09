@@ -877,14 +877,24 @@ mod tests {
             std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
             f.to_string_lossy().into_owned()
         };
+        // ETXTBSY (Linux): ein parallel geforkter Test erbt kurz das Schreib-Handle der frischen Datei, dann nochmal.
+        let run = |cli: &str, args: &[&str], d: Duration| {
+            for _ in 0..40 {
+                match unity(cli, &dir, args, d) {
+                    Err(e) if e.contains("Text file busy") => std::thread::sleep(Duration::from_millis(50)),
+                    r => return r,
+                }
+            }
+            unity(cli, &dir, args, d)
+        };
         let ok = script("ok", r#"echo '{"success":true,"data":7}'"#);
-        assert_eq!(envelope(&unity(&ok, &dir, &[], SHORT).unwrap()).unwrap(), 7);
+        assert_eq!(envelope(&run(&ok, &[], SHORT).unwrap()).unwrap(), 7);
 
         // Enkel wie Unity unter `unity test`: muss mit weg, sonst haelt er die Pipe und laeuft verwaist weiter.
         let pidfile = dir.join("enkel.pid");
         let hang = script("hang", &format!("sleep 60 & echo $! > '{}'; wait", pidfile.display()));
         let t = Instant::now();
-        let e = unity(&hang, &dir, &["x"], Duration::from_secs(1)).unwrap_err();
+        let e = run(&hang, &["x"], Duration::from_secs(1)).unwrap_err();
         assert!(e.contains("beendet"), "{e}");
         assert!(t.elapsed() < Duration::from_secs(10));
         let enkel = std::fs::read_to_string(&pidfile).unwrap();
