@@ -8,5 +8,9 @@ fn main() {
     let _ = std::process::Command::new("defaults")
         .args(["write", "com.marlonschmitz.openclaude", "ApplePressAndHoldEnabled", "-bool", "false"])
         .status();
+    // macOS setzt die Bundle-ID als Env; Kindprozesse mit Fenster (Run, Spiele) erben sie
+    // und erscheinen dann als weiteres "Open Claude" im Dock.
+    #[cfg(target_os = "macos")]
+    std::env::remove_var("__CFBundleIdentifier");
     ocui_lib::run()
 }
