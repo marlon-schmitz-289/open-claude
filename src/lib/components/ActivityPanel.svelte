@@ -35,6 +35,7 @@
     steps: Step[];
     text: string | null;
     result: string | null;
+    prompt: string | null;
   };
   type Run = {
     id: string;
@@ -77,6 +78,8 @@
   let now = $state(Date.now());
   // Offen/zu je Run; ohne Eintrag sind laufende Runs offen.
   let openRuns = $state<Record<string, boolean>>({});
+  // Aufgeklappte Prompts, Schluessel `${run}:${agent}`; standardmaessig zu.
+  let openPrompts = $state<Record<string, boolean>>({});
   // Geoeffneter Agent: volle Zeitleiste statt Liste.
   let focus = $state<{ run: string; agent: string } | null>(null);
   let log = $state<Entry[] | null>(null);
@@ -96,6 +99,7 @@
     error: ["✕", "text-destructive", "Fehler"],
     failed: ["✕", "text-destructive", "Fehler"],
     aborted: ["⊘", "text-muted-foreground", "abgebrochen"],
+    open: ["○", "text-muted-foreground/60", "offen"],
     killed: ["⊘", "text-muted-foreground", "abgebrochen"],
   };
   const status = (s: string) => STATUS[s] ?? ["○", "text-muted-foreground", s];
@@ -286,14 +290,29 @@
   }
   const ACT = { run: "running", ok: "done", err: "error" } as const;
 
-  const phaseState = (r: Run, p: string) =>
-    r.agents.some((a) => a.phase === p && a.state === "running")
-      ? "active"
-      : r.agents.some((a) => a.phase === p) && r.agents.filter((a) => a.phase === p).every((a) => a.state === "done")
-        ? "done"
-        : "open";
+  // Status-Schluessel fuer status(): Laufen schlaegt Fehler schlaegt Abbruch; ohne Agents offen.
+  const phaseState = (as: Agent[]) =>
+    as.some((a) => a.state === "running")
+      ? "running"
+      : as.some((a) => a.state === "error" || a.state === "failed")
+        ? "error"
+        : as.length && as.every((a) => a.state === "done")
+          ? "done"
+          : as.some((a) => a.state === "aborted")
+            ? "aborted"
+            : "open";
 
   const agentDur = (r: Run, a: Agent) => (a.started ? (a.state === "running" ? Date.now() : a.last_at) - a.started : 0);
+  // Phasen in Reihenfolge von r.phases, Agents ohne (bekannte) Phase zuletzt; leere Restgruppe faellt weg.
+  const groups = (r: Run) =>
+    [...new Set([...r.phases, ""])]
+      .map((p) => ({ p, agents: r.agents.filter((a) => (p ? a.phase === p : !r.phases.includes(a.phase))) }))
+      .filter((g) => g.p || g.agents.length);
+  // Erster Start bis letztes Ende der Agents einer Phase
+  const span = (as: Agent[]) => {
+    const s = as.filter((a) => a.started);
+    return s.length ? Math.max(...s.map((a) => (a.state === "running" ? Date.now() : a.last_at))) - Math.min(...s.map((a) => a.started)) : 0;
+  };
 
   const index = $derived(imgs.findIndex((m) => m.id === shown));
   const current = $derived(index < 0 ? null : imgs[index]);
@@ -552,46 +571,61 @@
             <span class="text-muted-foreground shrink-0 tabular-nums">{text} · {dur(r.duration_ms)} · {tokens(r.tokens)}</span>
           </button>
           {#if open}
-            {#if r.phases.length}
-              <div class="flex flex-wrap gap-1 px-2 pb-1.5">
-                {#each r.phases as p, i (i)}
-                  {@const ps = phaseState(r, p)}
-                  <span
-                    class="rounded-full px-1.5 py-px text-[10px] ring-1 {ps === 'active'
-                      ? 'text-primary ring-primary/40'
-                      : ps === 'done'
-                        ? 'text-foreground ring-foreground/10'
-                        : 'text-muted-foreground/60 ring-foreground/5'}">{ps === "done" ? "✓ " : ""}{p}</span
+            {#each groups(r) as g (g.p)}
+              {#if r.phases.length}
+                {@const [pi, pc, pt] = status(phaseState(g.agents))}
+                {@const n = g.agents.filter((a) => a.state === "done").length}
+                <div class="border-border/60 bg-secondary/30 flex items-center gap-2 border-t px-2 py-1">
+                  <span class={pc} title={pt}>{pi}</span>
+                  <span class="min-w-0 flex-1 truncate font-medium {g.p ? '' : 'text-muted-foreground'}">{g.p || "Ohne Phase"}</span>
+                  <span class="text-muted-foreground shrink-0 tabular-nums"
+                    >{pt} · {n}/{g.agents.length}{#if span(g.agents)} · {dur(span(g.agents))}{/if}{#if g.agents.some((a) => a.tokens)} · {tokens(
+                        g.agents.reduce((t, a) => t + a.tokens, 0),
+                      )}{/if}</span
                   >
-                {/each}
-              </div>
-            {/if}
-            <ul class="border-border/60 border-t">
-              {#each r.agents as a, i (i)}
-                {@const [ai, ac, at] = status(a.state)}
-                {@const last = a.steps.at(-1)}
-                <li>
-                  <button
-                    class="hover:bg-accent/40 group/agent w-full px-2 py-1 text-left disabled:cursor-default"
-                    disabled={!a.id}
-                    title={a.id ? "Verlauf anzeigen" : undefined}
-                    onclick={() => openAgent(r, a)}
-                  >
-                    <div class="flex items-center gap-2">
-                      <span class={ac} title={at}>{ai}</span>
-                      <span class="min-w-0 flex-1 truncate">{a.label || a.id}</span>
-                      <span class="text-muted-foreground shrink-0 tabular-nums"
-                        >{dur(agentDur(r, a))}{#if a.tokens} · {tokens(a.tokens)}{/if}</span
+                </div>
+              {/if}
+              <ul class="border-border/60 {g.agents.length ? 'border-t' : ''}">
+                {#each g.agents as a, i (i)}
+                  {@const [ai, ac, at] = status(a.state)}
+                  {@const last = a.steps.at(-1)}
+                  {@const pk = `${r.id}:${a.id || g.p + i}`}
+                  <li>
+                    <div class="flex items-start">
+                      <button
+                        class="hover:bg-accent/40 group/agent min-w-0 flex-1 px-2 py-1 text-left disabled:cursor-default"
+                        disabled={!a.id}
+                        title={a.id ? "Verlauf anzeigen" : undefined}
+                        onclick={() => openAgent(r, a)}
                       >
-                      {#if a.id}<ChevronRightIcon class="text-muted-foreground size-3.5 shrink-0 opacity-0 group-hover/agent:opacity-100" />{/if}
+                        <div class="flex items-center gap-2">
+                          <span class={ac} title={at}>{ai}</span>
+                          <span class="min-w-0 flex-1 truncate">{a.label || a.id}</span>
+                          <span class="text-muted-foreground shrink-0 tabular-nums"
+                            >{dur(agentDur(r, a))}{#if a.tokens} · {tokens(a.tokens)}{/if}</span
+                          >
+                          {#if a.id}<ChevronRightIcon class="text-muted-foreground size-3.5 shrink-0 opacity-0 group-hover/agent:opacity-100" />{/if}
+                        </div>
+                        {#if last}
+                          <div class="text-muted-foreground truncate pl-5 font-mono text-[11px]">{last.tool} {last.summary}</div>
+                        {/if}
+                      </button>
+                      {#if a.prompt}
+                        <!-- Eigener Button neben dem Agent-Button (nicht darin): klappt nur den Prompt -->
+                        <button
+                          class="text-muted-foreground hover:text-foreground shrink-0 px-1.5 py-1 text-[10px]"
+                          aria-expanded={!!openPrompts[pk]}
+                          onclick={() => (openPrompts[pk] = !openPrompts[pk])}>Prompt {openPrompts[pk] ? "▾" : "▸"}</button
+                        >
+                      {/if}
                     </div>
-                    {#if last}
-                      <div class="text-muted-foreground truncate pl-5 font-mono text-[11px]">{last.tool} {last.summary}</div>
+                    {#if a.prompt && openPrompts[pk]}
+                      <div class="bg-secondary/50 mx-2 mb-1 max-h-64 min-w-0 overflow-auto rounded-md px-2 py-1"><Markdown text={a.prompt} /></div>
                     {/if}
-                  </button>
-                </li>
-              {/each}
-            </ul>
+                  </li>
+                {/each}
+              </ul>
+            {/each}
           {/if}
         </section>
       {:else}

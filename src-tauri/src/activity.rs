@@ -81,6 +81,8 @@ pub struct Agent {
     steps: Vec<Step>,
     text: Option<String>,
     result: Option<String>,
+    /// Auftrag ohne Harness-Vorspann, gekuerzt
+    prompt: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -129,6 +131,7 @@ struct Sum {
     last_at: u64,
     steps: Vec<Step>,
     text: Option<String>,
+    prompt: Option<String>,
 }
 
 #[derive(Default)]
@@ -153,7 +156,12 @@ pub(crate) fn config_dir() -> PathBuf {
     std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| crate::skills::home().join(".claude"))
 }
 
-fn slug(cwd: &str) -> String {
+/// Pfad, wie claude ihn sieht: realpath mit echter Schreibweise (Dev -> dev, /tmp -> /private/tmp), Windows ohne "\\?\".
+pub(crate) fn real(cwd: &str) -> String {
+    fs::canonicalize(cwd).map_or_else(|_| cwd.into(), |p| p.to_string_lossy().trim_start_matches(r"\\?\").into())
+}
+
+pub(crate) fn slug(cwd: &str) -> String {
     cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
 }
 
@@ -161,7 +169,7 @@ fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
-fn ms(t: SystemTime) -> u64 {
+pub(crate) fn ms(t: SystemTime) -> u64 {
     t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
@@ -186,7 +194,7 @@ fn iso_ms(s: &str) -> u64 {
     (((days * 24 + h) * 60 + mi) * 60 + sec) as u64 * 1000 + frac as u64
 }
 
-fn trunc(s: &str, n: usize) -> String {
+pub(crate) fn trunc(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         s.to_string()
     } else {
@@ -194,7 +202,7 @@ fn trunc(s: &str, n: usize) -> String {
     }
 }
 
-fn str_of<'a>(v: &'a Value, k: &str) -> &'a str {
+pub(crate) fn str_of<'a>(v: &'a Value, k: &str) -> &'a str {
     v.get(k).and_then(Value::as_str).unwrap_or("")
 }
 
@@ -303,6 +311,26 @@ fn step(c: &Value, at: u64) -> Step {
 }
 
 const LOG_CHARS: usize = 4000;
+const PROMPT_CHARS: usize = 20000;
+
+/// Workflow-Agenten bekommen den Auftrag hinter einer Harness-Kopfzeile, jede Zeile um zwei Leerzeichen eingerueckt.
+fn task(s: &str) -> String {
+    let Some((_, body)) = s.strip_prefix("[Workflow harness").and_then(|r| r.split_once('\n')) else { return s.trim().into() };
+    body.lines().map(|l| l.strip_prefix("  ").unwrap_or(l)).collect::<Vec<_>>().join("\n").trim().into()
+}
+
+/// Auftrag aus der ersten Transkript-Zeile {type:user, message:{content:"..."}}.
+fn prompt_of(v: &Value) -> Option<String> {
+    let t = v.pointer("/message/content").and_then(Value::as_str).filter(|_| str_of(v, "type") == "user")?;
+    Some(trunc(&task(t), PROMPT_CHARS))
+}
+
+/// Nur die erste Zeile lesen: fertige Runs brauchen vom Transkript nur den Auftrag.
+fn first_prompt(path: &Path) -> Option<String> {
+    let mut line = String::new();
+    BufReader::new(File::open(path).ok()?).read_line(&mut line).ok()?;
+    prompt_of(&serde_json::from_str(&line).ok()?)
+}
 
 /// Ganzes Agent-Transkript als Zeitleiste: Auftrag, Texte, Tool-Calls samt Ergebnis.
 // ponytail: liest bei jedem Aufruf die ganze Datei; inkrementell wie sum_agent erst wenn es bremst
@@ -317,7 +345,7 @@ fn agent_log(path: &Path) -> Vec<Entry> {
                 // Erste Nutzer-Nachricht als Text ist der Auftrag; spaetere Strings sind Harness-Rauschen.
                 if let Some(t) = v.pointer("/message/content").and_then(Value::as_str) {
                     if out.is_empty() {
-                        out.push(Entry { at, kind: "prompt", body: trunc(t, LOG_CHARS), ..Default::default() });
+                        out.push(Entry { at, kind: "prompt", body: trunc(&task(t), LOG_CHARS), ..Default::default() });
                     }
                     continue;
                 }
@@ -366,7 +394,7 @@ pub async fn claude_agent_log(cwd: String, sid: String, run: String, agent: Stri
         return Err("Ungueltige Kennung".into());
     }
     blocking(move || {
-        let dir = config_dir().join("projects").join(slug(&cwd)).join(&sid).join("subagents/workflows").join(&run);
+        let dir = config_dir().join("projects").join(slug(&real(&cwd))).join(&sid).join("subagents/workflows").join(&run);
         Ok(agent_log(&dir.join(format!("agent-{agent}.jsonl"))))
     })
     .await
@@ -375,7 +403,10 @@ pub async fn claude_agent_log(cwd: String, sid: String, run: String, agent: Stri
 fn sum_agent(st: &mut State, path: &Path) -> Sum {
     let lines = new_lines(path, &mut st.sum_offsets);
     let s = st.sums.entry(path.to_path_buf()).or_default();
-    for (_, line) in lines {
+    for (off, line) in lines {
+        if off == 0 {
+            s.prompt = serde_json::from_str(&line).ok().as_ref().and_then(prompt_of);
+        }
         if !line.contains("\"type\":\"assistant\"") {
             continue;
         }
@@ -442,7 +473,8 @@ fn phases_of(script: &str) -> Vec<String> {
     out
 }
 
-fn finished(v: &Value, id: &str) -> Run {
+/// dir = subagents/workflows/<id> mit den Agent-Transkripten (fuer den vollen Auftrag).
+fn finished(v: &Value, id: &str, dir: &Path) -> Run {
     let arr = |k: &str| v.get(k).and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
     let agents = arr("workflowProgress")
         .iter()
@@ -450,8 +482,12 @@ fn finished(v: &Value, id: &str) -> Run {
         .map(|a| {
             let started = u64_of(a, "startedAt");
             let last = u64_of(a, "lastProgressAt").max(started + u64_of(a, "durationMs"));
+            let id = str_of(a, "agentId");
+            let full = (!id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric()))
+                .then(|| first_prompt(&dir.join(format!("agent-{id}.jsonl"))))
+                .flatten();
             Agent {
-                id: str_of(a, "agentId").into(),
+                id: id.into(),
                 label: str_of(a, "label").into(),
                 phase: str_of(a, "phaseTitle").into(),
                 state: match str_of(a, "state") {
@@ -471,6 +507,7 @@ fn finished(v: &Value, id: &str) -> Run {
                     .collect(),
                 text: None,
                 result: a.get("resultPreview").and_then(Value::as_str).map(Into::into),
+                prompt: full.or_else(|| a.get("promptPreview").and_then(Value::as_str).map(Into::into)),
             }
         })
         .collect();
@@ -529,7 +566,7 @@ fn live(st: &mut State, dir: &Path, scripts: &Path, id: &str, alive: Option<u64>
     for a in &mut agents {
         if !a.id.is_empty() && a.id.bytes().all(|b| b.is_ascii_alphanumeric()) {
             let s = sum_agent(st, &dir.join(format!("agent-{}.jsonl", a.id)));
-            (a.started, a.last_at, a.tokens, a.tool_calls, a.steps, a.text) = (s.started, s.last_at, s.tokens, s.tool_calls, s.steps, s.text);
+            (a.started, a.last_at, a.tokens, a.tool_calls, a.steps, a.text, a.prompt) = (s.started, s.last_at, s.tokens, s.tool_calls, s.steps, s.text, s.prompt);
         }
         if !running && a.state == "running" {
             a.state = "aborted".into();
@@ -611,7 +648,7 @@ fn activity_in(cache: &mut Cache, c: &Path, cwd: &str, now: u64) -> Activity {
         }
         let json = base.join("workflows").join(format!("{id}.json"));
         if let Some(v) = fs::read_to_string(&json).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
-            let r = finished(&v, &id);
+            let r = finished(&v, &id, &e.path());
             st.done.insert(id, r.clone());
             runs.push(r);
         } else {
@@ -635,7 +672,7 @@ fn activity_in(cache: &mut Cache, c: &Path, cwd: &str, now: u64) -> Activity {
 #[tauri::command]
 pub async fn claude_activity(cwd: String, id: String) -> Result<Activity, String> {
     blocking(move || {
-        let mut a = activity_in(&mut *CACHE.lock().map_err(|e| e.to_string())?, &config_dir(), &cwd, now_ms());
+        let mut a = activity_in(&mut *CACHE.lock().map_err(|e| e.to_string())?, &config_dir(), &real(&cwd), now_ms());
         // Halb geschriebene Datei: None, das Frontend behaelt den letzten Wert.
         a.modes = modes(&config_dir());
         if crate::pty::valid_id(&id) {
@@ -759,13 +796,17 @@ mod tests {
         put(
             &base.join("workflows/wf_2.json"),
             r#"{"workflowName":"x","status":"completed","durationMs":5,"totalTokens":575163,"startTime":9,"phases":[{"title":"Research"}],
-               "workflowProgress":[{"type":"workflow_phase"},{"type":"workflow_agent","label":"eins","state":"done","tokens":3,"lastToolName":"Bash","lastToolSummary":"ls"}]}"#,
+               "workflowProgress":[{"type":"workflow_phase"},{"type":"workflow_agent","label":"eins","state":"done","tokens":3,"lastToolName":"Bash","lastToolSummary":"ls","agentId":"a1","promptPreview":"kurz"},
+                 {"type":"workflow_agent","label":"zwei","agentId":"a2","promptPreview":"nur Vorschau"}]}"#,
         );
+        put(&base.join("subagents/workflows/wf_2/agent-a1.jsonl"), "{\"type\":\"user\",\"message\":{\"content\":\"voller Auftrag\"}}\n{kaputt");
         let a = activity_in(&mut Cache::new(), &c, "/w/p", 0);
         let r = &a.runs[0];
         assert_eq!((r.status.as_str(), r.tokens, r.name.as_str()), ("completed", 575163, "x"));
-        assert_eq!(r.agents.len(), 1);
+        assert_eq!(r.agents.len(), 2);
         assert_eq!(r.agents[0].steps[0].summary, "ls");
+        let p = |i: usize| r.agents[i].prompt.as_deref();
+        assert_eq!((p(0), p(1)), (Some("voller Auftrag"), Some("nur Vorschau")));
     }
 
     #[test]
@@ -794,6 +835,16 @@ mod tests {
         assert_eq!(s.steps[0].summary, "ls -la");
         assert_eq!(s.steps[1].summary, "/a.png");
         assert_eq!(s.text.as_deref(), Some("hallo"));
+        assert_eq!(s.prompt.as_deref(), Some("\"type\":\"assistant\""));
+    }
+
+    #[test]
+    fn auftrag_ohne_vorspann() {
+        let t = "[Workflow harness — computed task] Kein User. The computed task text follows:\n  \n  Projekt: x\n    - eingerueckt\n  \n  Ende\n";
+        assert_eq!(task(t), "Projekt: x\n  - eingerueckt\n\nEnde");
+        assert_eq!(task("  normaler Prompt\n  zwei\n"), "normaler Prompt\n  zwei");
+        let v = serde_json::json!({"type":"user","message":{"content":t}});
+        assert_eq!(prompt_of(&v).unwrap(), "Projekt: x\n  - eingerueckt\n\nEnde");
     }
 
     #[test]
