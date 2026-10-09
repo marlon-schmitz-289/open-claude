@@ -551,7 +551,6 @@ pub fn run() {
             set_tray,
             deps::deps_missing,
             deps::deps_install,
-            pty::pty_open,
             pty::pty_write,
             pty::pty_resize,
             pty::pty_close,
@@ -762,7 +761,7 @@ mod tests {
         // XDG_DATA_DIRS haengt das AppDir vorne an; der Systemteil muss bleiben.
         let env = &[("XDG_DATA_DIRS", "/tmp/.mount_OpenCl42/usr/share:/usr/share:/usr/local/share")];
         assert_eq!(wert(env, "XDG_DATA_DIRS"), Some(Some("/usr/share:/usr/local/share".into())));
-        // PATH beginnt mit $APPDIR/usr/bin — sonst findet ein Kind dort ocui-sh.
+        // PATH beginnt mit $APPDIR/usr/bin — sonst findet ein Kind dort die gebundelten Bins.
         let path = &[("PATH", "/tmp/.mount_OpenCl42/usr/bin:/usr/bin:/bin")];
         assert_eq!(wert(path, "PATH"), Some(Some("/usr/bin:/bin".into())));
     }

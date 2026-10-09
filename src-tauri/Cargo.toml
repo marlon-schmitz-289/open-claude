@@ -25,9 +25,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 walkdir = "2"
 portable-pty = "0.9"
-# nur fuer die eigene Shell (src/bin/ocui-sh.rs)
-reedline = "0.49"
-ctrlc = "3"
 # native-tls = SChannel: nutzt den Windows-Zertifikatsspeicher (Firmen-Root-CA hinter Proxy)
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "query", "native-tls", "charset", "http2", "system-proxy"] }
 base64 = "0.23.1"
