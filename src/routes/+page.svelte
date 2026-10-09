@@ -128,7 +128,7 @@
   const RATES: [string, number][] = [["Selten", 3], ["Normal", 1], ["Oft", 0.4]];
   let input = $state<HTMLInputElement | null>(null);
   // Eine Session pro Projekt; die Tab-Leiste ueber dem Terminal wechselt zwischen ihnen.
-  let sessions = $state<{ id: string; repo: Repo }[]>([]);
+  let sessions = $state<{ id: string; repo: Repo; resume?: string }[]>([]);
   let active = $state<string | null>(null);
   const activeSession = $derived(sessions.find((s) => s.id === active));
   // Aktivitaets-Panel rechts neben dem Terminal: Breite und offen/zu ueberleben den Neustart.
@@ -736,6 +736,14 @@
     sessions = sessions.filter((s) => s.id !== id);
     // Wie bei Tabs ueblich zur letzten verbliebenen Session, erst ohne Session zurueck zur Liste.
     if (active === id) sessions.length ? (active = sessions.at(-1)!.id) : back();
+  }
+
+  /** /resume: neuer Chat mit neuer id statt Neustart unter alter id, sonst wirft dessen Exit-Thread den neuen Prozess aus der Map. */
+  function resumeIn(id: string, sid: string) {
+    const i = sessions.findIndex((s) => s.id === id);
+    if (i < 0) return;
+    sessions[i] = { id: crypto.randomUUID(), repo: sessions[i].repo, resume: sid };
+    if (active === id) active = sessions[i].id;
   }
 
   // Klick/Enter oeffnet Git, mit Strg+Enter bzw. Umschalt+Klick Claude (Strg+Klick ist auf dem Mac Rechtsklick).
@@ -1362,7 +1370,14 @@
   <div class="flex min-h-0 flex-1 {view === 'term' ? '' : 'hidden'}">
     <div class="min-w-0 flex-1">
       {#each sessions as s (s.id)}
-        <Chat id={s.id} cwd={s.repo.path} visible={s.id === active} />
+        <Chat
+          id={s.id}
+          cwd={s.repo.path}
+          visible={s.id === active}
+          resume={s.resume}
+          onresume={(sid) => resumeIn(s.id, sid)}
+          onexit={() => closeSession(s.id)}
+        />
       {/each}
     </div>
     {#if side && activeSession && view === "term"}
