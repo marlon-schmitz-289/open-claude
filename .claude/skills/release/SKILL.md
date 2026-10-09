@@ -29,6 +29,17 @@ node --test src/lib/*.test.ts
 
 Irgendwas rot → stoppen, fixen, nicht taggen.
 
+### Lockfile prüfen (immer, auch ohne Dependency-Änderung)
+
+Lokales npm (macOS) wirft bei `npm install`/`npm uninstall` gern optionale Plattform-Pakete aus `package-lock.json` (z. B. `@emnapi/*`). Lokal merkt man nichts, in CI scheitert `npm ci` auf allen Jobs nach ~1 min mit `Missing: … from lock file` (so passiert bei 1.2.5).
+
+```sh
+git diff $last -- package-lock.json | grep -E '^-\s+"node_modules/'
+```
+
+- Jede Zeile muss ein **bewusst entferntes** Paket sein (entfernte Dependency samt eigenen Unterpaketen).
+- Fremde Einträge weg → Lockfile vom letzten Tag nehmen (`git show $last:package-lock.json > package-lock.json`) und nur die gewollten Pakete per Skript aus `packages[""].dependencies` und `packages["node_modules/…"]` löschen. Nicht `npm install` drüberlaufen lassen.
+
 ## 3. Version bumpen + committen
 
 Die Version steht an **fünf** Stellen, alle ändern:
