@@ -63,6 +63,9 @@
       fontFamily: css.getPropertyValue("--font-mono") || "monospace",
       fontSize: 12,
       lineHeight: 1.2,
+      letterSpacing: 0.3,
+      fontWeightBold: "600",
+      drawBoldTextInBrightColors: false,
       scrollback: 5000,
       theme: theme.dark ? DARK : LIGHT,
     });
@@ -131,6 +134,21 @@
     </Button>
     <Button variant="ghost" size="icon-xs" title="Ausgabe leeren" onclick={() => clearOutput(repo)}><EraserIcon /></Button>
   </div>
-  <div bind:this={el} class="min-h-0 flex-1 px-2 py-1"></div>
+  <!-- Karte wie die alte Claude-Shell: dezenter Primary-Schimmer scheint durchs transparente Terminal. -->
+  <div class="min-h-0 flex-1 p-2">
+    <div
+      class="ring-foreground/5 focus-within:ring-primary/40 focus-within:shadow-primary/10 h-full overflow-hidden rounded-xl px-3 py-2.5 shadow-lg ring-1 shadow-black/10 transition-shadow duration-300 dark:shadow-black/30"
+      style="background: radial-gradient(ellipse at top right, color-mix(in oklch, var(--primary) 8%, transparent), transparent 60%), var(--card);"
+    >
+      <div bind:this={el} class="h-full"></div>
+    </div>
+  </div>
 </div>
+
+<style>
+  /* xterm.css gibt dem Viewport schwarz, das verdeckt die Karte. */
+  :global(.xterm .xterm-viewport) {
+    background-color: transparent !important;
+  }
+</style>
 
