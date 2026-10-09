@@ -116,7 +116,24 @@
     }
   }
 
+  // Ausgabe von !-Befehlen: geht wie bei claude im Terminal als Kontext mit der naechsten Nachricht raus.
+  let shell: string[] = [];
+  // Wie claudes Bash-Modus: lange Ausgaben gekuerzt, damit der Kontext nicht volllaeuft.
+  const cut = (t: string) => (t.length > 30000 ? `${t.slice(0, 30000)}\n… (gekürzt)` : t).trimEnd();
+
+  async function bash(cmd: string) {
+    try {
+      const o = await invoke<{ stdout: string; stderr: string; code: number | null }>("chat_bash", { cwd, cmd });
+      const out = [o.stdout, o.stderr].map(cut).filter(Boolean).join("\n");
+      note(out || `(keine Ausgabe, Exit ${o.code ?? "?"})`, o.code !== 0);
+      shell.push(`<bash-input>${cmd}</bash-input>\n<bash-stdout>${cut(o.stdout)}</bash-stdout><bash-stderr>${cut(o.stderr)}</bash-stderr>`);
+    } catch (e) {
+      note(String(e), true);
+    }
+  }
+
   function prompt(text: string, pics: string[] = []) {
+    if (shell.length) (text = [...shell, text].filter(Boolean).join("\n\n")), (shell = []);
     // data:<typ>;base64,<daten> -> Bild-Block der API
     const blocks = pics.map((u) => ({ type: "image", source: { type: "base64", media_type: u.slice(5, u.indexOf(";")), data: u.slice(u.indexOf(",") + 1) } }));
     const content = blocks.length ? [...blocks, ...(text ? [{ type: "text", text }] : [])] : text;
@@ -136,7 +153,9 @@
     draft = "";
     imgs = [];
     tick().then(grow);
-    if (r?.kind === "local") local(r.name, r.args);
+    if (!pics.length && text.startsWith("!")) {
+      if (text.slice(1).trim()) bash(text.slice(1).trim());
+    } else if (r?.kind === "local") local(r.name, r.args);
     else if (r?.kind === "unknown") note(`/${r.name} gibt es hier nicht, /help zeigt alle`);
     else prompt(text, pics);
   }

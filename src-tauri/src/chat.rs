@@ -269,9 +269,53 @@ pub async fn chat_image(path: String) -> Result<String, String> {
     .await
 }
 
+#[derive(Serialize)]
+pub struct BashOut {
+    stdout: String,
+    stderr: String,
+    code: Option<i32>,
+}
+
+/// `!befehl` im Chat, wie claudes Bash-Modus: Login-Shell im Projekt, ohne stdin.
+/// shortcut: kein Timeout und kein Abbruch, wartende Befehle (ohne Ende) blockieren nur diesen Aufruf; bei Bedarf ueber runner::launch streamen.
+#[tauri::command]
+pub async fn chat_bash(cwd: String, cmd: String) -> Result<BashOut, String> {
+    crate::git::blocking(move || {
+        let mut c = if cfg!(windows) {
+            let mut c = crate::quiet("cmd.exe");
+            c.args(["/d", "/s", "/c"]);
+            // cmd parst selbst, Rusts Quoting wuerde Anfuehrungszeichen im Befehl verfaelschen.
+            #[cfg(windows)]
+            std::os::windows::process::CommandExt::raw_arg(&mut c, format!("\"{cmd}\""));
+            c
+        } else {
+            let sh = std::env::var("SHELL").ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| crate::pty::UNIX_SHELL.into());
+            let mut c = crate::quiet(&sh);
+            c.args(["-lic", &cmd]);
+            c
+        };
+        let o = c.current_dir(&cwd).stdin(Stdio::null()).output().map_err(|e| format!("Befehl nicht startbar: {e}"))?;
+        Ok(BashOut {
+            stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+            code: o.status.code(),
+        })
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn bash_im_projekt() {
+        let o = tauri::async_runtime::block_on(chat_bash("/tmp".into(), "pwd; echo f >&2; exit 4".into())).unwrap();
+        assert!(o.stdout.trim_end().ends_with("tmp"), "{}", o.stdout);
+        assert!(o.stderr.contains('f'));
+        assert_eq!(o.code, Some(4));
+    }
 
     #[test]
     fn bildtyp_nach_endung() {
