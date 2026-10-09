@@ -26,6 +26,18 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 #[test]
+fn user_settings_schreiben_nur_wenn_unveraendert() {
+    let home = tmp("user");
+    assert_eq!(user_read(&home).unwrap(), "");
+    assert!(user_write(&home, "[1]", "").is_err());
+    user_write(&home, r#"{"model":"opus"}"#, "").unwrap();
+    assert_eq!(user_read(&home).unwrap(), r#"{"model":"opus"}"#);
+    // veralteter Stand wird abgelehnt, Datei bleibt
+    assert!(user_write(&home, "{}", "").is_err());
+    assert_eq!(user_read(&home).unwrap(), r#"{"model":"opus"}"#);
+}
+
+#[test]
 fn nichts_zu_schreiben_legt_nichts_an() {
     let repo = tmp("none");
     write_local(&repo, None, None).unwrap();

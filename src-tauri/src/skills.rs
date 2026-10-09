@@ -189,19 +189,52 @@ pub(crate) fn write_local(
     if old.as_ref() == Some(&map) || (old.is_none() && map.is_empty()) {
         return Ok(());
     }
+    atomic_write(&file, &(serde_json::to_string_pretty(&Value::Object(map)).unwrap() + "\n"))?;
+    exclude(repo);
+    Ok(())
+}
+
+fn atomic_write(file: &Path, text: &str) -> Result<(), String> {
     std::fs::create_dir_all(file.parent().unwrap()).map_err(|e| e.to_string())?;
     // eindeutiger Temp-Name, parallele Aufrufe zerstoeren sich sonst gegenseitig die Datei
     static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = file.with_extension(format!("json.{}.{n}.tmp", std::process::id()));
-    let text = serde_json::to_string_pretty(&Value::Object(map)).unwrap() + "\n";
     std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &file).map_err(|e| {
+    std::fs::rename(&tmp, file).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         e.to_string()
-    })?;
-    exclude(repo);
-    Ok(())
+    })
+}
+
+/// ~/.claude/settings.json roh; fehlend = "".
+pub(crate) fn user_read(home: &Path) -> Result<String, String> {
+    match std::fs::read_to_string(home.join(".claude").join("settings.json")) {
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Schreibt nur, wenn die Datei seit dem Lesen unveraendert ist (expected), sonst gingen Aenderungen von Claude Code verloren.
+pub(crate) fn user_write(home: &Path, text: &str, expected: &str) -> Result<(), String> {
+    if !matches!(serde_json::from_str::<Value>(text), Ok(Value::Object(_))) {
+        return Err("Kein gültiges JSON-Objekt".into());
+    }
+    if user_read(home)? != expected {
+        return Err("settings.json wurde inzwischen geändert, bitte neu laden".into());
+    }
+    atomic_write(&home.join(".claude").join("settings.json"), text)
+}
+
+#[tauri::command]
+pub async fn claude_settings_read() -> Result<String, String> {
+    blocking(|| user_read(&home())).await
+}
+
+#[tauri::command]
+pub async fn claude_settings_write(text: String, expected: String) -> Result<(), String> {
+    blocking(move || user_write(&home(), &text, &expected)).await
 }
 
 /// Getrackte settings.local.json nie anfassen: sonst landen die privaten Plugins des Users im Commit.

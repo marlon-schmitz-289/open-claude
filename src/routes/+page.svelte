@@ -36,6 +36,8 @@
   import XIcon from "@lucide/svelte/icons/x";
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
   import SettingsIcon from "@lucide/svelte/icons/settings";
+  import BotIcon from "@lucide/svelte/icons/bot";
+  import ClaudeSettingsDialog from "$lib/components/ClaudeSettingsDialog.svelte";
   import { ContextMenu, DropdownMenu } from "bits-ui";
   import Notice from "$lib/components/Notice.svelte";
   import TerminalIcon from "@lucide/svelte/icons/terminal";
@@ -158,6 +160,7 @@
   let accounts = $state<Account[]>([]);
   let skillStore = $state<SkillStore>({ profiles: {}, kindProfiles: {}, projects: {} });
   let profilesOpen = $state(false);
+  let claudeOpen = $state(false);
   // Sync-Fehler sichtbar in jeder Ansicht (Liste, Terminal, Git), notice gehoert nur zur Liste.
   let skillNotice = $state("");
 
@@ -802,12 +805,12 @@
     if (e.key === "Escape" && (overlayOnEsc || e.defaultPrevented)) return;
     const ctrl = e.ctrlKey || e.metaKey;
     if (e.key === "F1" || (ctrl && e.key === "/")) {
-      if (!cloneOpen && !createOpen && !accountsOpen && !setup && !profilesOpen) help = !help;
+      if (!cloneOpen && !createOpen && !accountsOpen && !claudeOpen && !setup && !profilesOpen) help = !help;
       e.preventDefault();
       return;
     }
     // Offene Dialoge (Hilfe, Klonen, Anlegen, Konten) bekommen ihre Tasten selbst.
-    if (help || cloneOpen || createOpen || accountsOpen || setup || doomed || profilesOpen) return;
+    if (help || cloneOpen || createOpen || accountsOpen || claudeOpen || setup || doomed || profilesOpen) return;
 
     if (ctrl && e.key >= "1" && e.key <= "9") {
       launch(flat[Number(e.key) - 1]?.repo);
@@ -1169,6 +1172,13 @@
               >
                 <SparklesIcon class="text-muted-foreground size-3.5" />
                 <span class="flex-1">Skill-Profile</span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                class={cn(menuItem, "py-1.5")}
+                onSelect={() => (claudeOpen = true)}
+              >
+                <BotIcon class="text-muted-foreground size-3.5" />
+                <span class="flex-1">Claude-Einstellungen</span>
               </DropdownMenu.Item>
               <DropdownMenu.Item
                 class={cn(menuItem, "py-1.5")}
@@ -1610,6 +1620,7 @@
   </Dialog.Content>
 </Dialog.Root>
 
+<ClaudeSettingsDialog bind:open={claudeOpen} />
 <ProfilesDialog bind:open={profilesOpen} store={skillStore} {repos} repo={current?.repo.path} onsave={saveProfiles} />
 
 <UnityCloseDialog bind:path={unityClosePath} onclosed={(p) => loadUnityInfo(p, true)} />
