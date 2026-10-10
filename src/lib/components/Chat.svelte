@@ -81,6 +81,8 @@
   // Live-Text aus stream_event je Nachricht:Index; die fertige assistant-Nachricht kommt danach nur noch fuer Tools.
   const live = new Map<string, { text: string }>();
   const streamed = new Set<string>();
+  // Message-ID des laufenden Streams: nicht jede claude-Version setzt api_message_id, message_start hat sie immer.
+  let streamId = "";
   let log: HTMLDivElement;
   let content: HTMLDivElement;
   let field: HTMLTextAreaElement;
@@ -130,12 +132,14 @@
       note(`API-Fehler, neuer Versuch${m.attempt ? ` (${m.attempt}${m.max_retries ? `/${m.max_retries}` : ""})` : ""} …`, true);
     } else if (m.type === "stream_event") {
       const e = m.event;
-      const key = `${m.api_message_id}:${e?.index}`;
+      if (e?.type === "message_start") streamId = e.message?.id ?? "";
+      const msg = m.api_message_id ?? streamId;
+      const key = `${msg}:${e?.index}`;
       const type = e?.content_block?.type;
       if (e?.type === "content_block_start" && (type === "text" || type === "thinking")) {
         items.push({ kind: type === "text" ? "text" : "think", text: "" });
         live.set(key, items[items.length - 1] as { text: string });
-        streamed.add(m.api_message_id);
+        streamed.add(msg);
       } else if (e?.type === "content_block_delta") {
         const it = live.get(key);
         if (it) it.text += e.delta?.text ?? e.delta?.thinking ?? "";
